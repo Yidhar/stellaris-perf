@@ -18,7 +18,7 @@
 
 ## 安装和使用
 
-1. 在 Releases 页面下载 `stellaris-perf-<版本>.zip`，解压到任意位置。
+1. 在 [Releases 页面](https://github.com/yidhar-k/stellaris-perf/releases)下载 `stellaris-perf-<版本>.zip`，解压到任意位置。旁边的 `.sha256` 文件是校验和。
 2. 启动 Stellaris（是否已读档都可以），运行 `python scripts\perfctl.py load`（Python 3.8+，不需要额外的包）。想在启动游戏时自动注入，先运行 `python scripts\perfctl.py load --wait`，再启动游戏。
 3. 设置放在 `stellaris.exe` 旁边的 `stellaris_perf.ini`。首次运行会按默认值生成，之后每 2 秒重新读取一次，所以游戏运行中就能改设置。
 4. `python scripts\perfctl.py unload` 摘掉钩子并卸载 DLL；`status` 显示是否已加载。
@@ -112,7 +112,9 @@ python tools\extract_sdk.py <完整的 stellaris_sdk.hpp 路径>   # 重写 sdk\
 
 ## 发布和 CI
 
-`.github/workflows/build-release.yml` 在每次 push 和 pull request 时编译两个 DLL，并把打包好的 zip 作为工作流产物保存。推送 `v0.1.0` 这样的标签，还会发布一个带两个 zip 和 SHA-256 文件的 GitHub Release。
+发布页：<https://github.com/yidhar-k/stellaris-perf/releases>。当前版本是 **v0.1.0**，由 CI 根据标签编译并发布，附带两个 zip 和对应的 SHA-256 文件。
+
+`.github/workflows/build-release.yml` 在每次 push 和 pull request 时编译两个 DLL，并把打包好的 zip 作为工作流产物保存。推送一个以 `v` 开头的新标签（例如 `git tag v0.2.0 && git push origin v0.2.0`），同一个工作流就会发布 GitHub Release，附带两个 zip、SHA-256 文件，以及写明 DLL 对应游戏版本的发布说明。标签里带 `-` 的（例如 `v0.2.0-rc1`）会作为预发布版本。
 
 ## 基准测试和压力测试
 

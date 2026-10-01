@@ -24,7 +24,8 @@ stress-test tooling used to find and check these optimizations.
 
 ## Install and use
 
-1. Download `stellaris-perf-<version>.zip` from the Releases page and unpack it anywhere.
+1. Download `stellaris-perf-<version>.zip` from the [Releases page](https://github.com/yidhar-k/stellaris-perf/releases)
+   and unpack it anywhere. The `.sha256` file next to it holds the checksum.
 2. Start Stellaris (a save may or may not be loaded) and run
    `python scripts\perfctl.py load`
    (Python 3.8+, no packages). To inject automatically at launch, run `python scripts\perfctl.py load --wait`
@@ -161,9 +162,13 @@ and rebuild. Which game build a release was made for is printed in its release n
 
 ## Releases and CI
 
+Releases: <https://github.com/yidhar-k/stellaris-perf/releases>. The current one is **v0.1.0**, built by CI from the
+tag, with both zips and their SHA-256 files attached.
+
 `.github/workflows/build-release.yml` builds both DLLs on every push and pull request and keeps the packaged zips as
-workflow artifacts. Pushing a tag such as `v0.1.0` also publishes a GitHub Release with both zips and their SHA-256
-files.
+workflow artifacts. Pushing a new tag that starts with `v` (for example `git tag v0.2.0 && git push origin v0.2.0`)
+makes the same workflow publish a GitHub Release with both zips, their SHA-256 files and release notes that state the
+game build the DLLs were made for. A tag with a `-` in it (such as `v0.2.0-rc1`) is published as a pre-release.
 
 ## Benchmarks and stress testing
 
