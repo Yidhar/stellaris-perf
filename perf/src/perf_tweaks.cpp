@@ -314,6 +314,31 @@ bool BuildRuleKey(const void* rule, const void* scope, RuleKey* key) {
     }
 }
 
+}  // namespace
+
+bool IsMultiplayerSession() {
+    if (!g_base) return false;
+    __try {
+        const uintptr_t idler = *(const uintptr_t*)(g_base + sdk::glob::g_CurrentInGameIdler);
+        return idler && *(const uint8_t*)(idler + sdk::rt::CGameIdler_is_multiplayer) != 0;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+Settings ForMultiplayer(const Settings& s) {
+    Settings r = s;
+    r.opinion_cache = false;
+    r.rule_cache = 0;
+    r.modifier_flush = 0;
+    r.flag_simd = 0;
+    r.flag_expiry_skip = false;
+    r.fleet_parallel_grain1 = false;
+    return r;
+}
+
+namespace {
+
 uint32_t ReadGameDay() {
     __try {
         const uintptr_t gs = *(const uintptr_t*)(g_base + sdk::glob::g_CurrentGameState);

@@ -123,6 +123,7 @@ clones.
 | `rule_cache` | `0` | `0` off, `1` every rule, `2` adaptive |
 | `modifier_flush` | `0` | `0` engine, `1` serial fast path, `2` verify, `3` control |
 | `modifier_flush_max` | `32` | largest dirty set that takes the serial path |
+| `multiplayer_guard` | `1` | `1` force simulation-affecting settings off in a multiplayer session, `0` never override, `2` test (act as if in multiplayer) |
 | `profile`, `rule_profile`, `scope_profile` | `0` | diagnostics |
 
 ## How it is built to be safe
@@ -137,10 +138,24 @@ clones.
 
 ## Multiplayer
 
-Stellaris multiplayer is lock-step: every client simulates the same game and compares checksums. The default
-settings are designed not to change any result, but they have **not been tested in a multiplayer session**. The
-approximation caches and the modifier fast path can change results; if you try them, every player must use
-identical settings, or an out-of-sync error is likely.
+Stellaris multiplayer is lock-step: every client simulates the same game and compares checksums, so anything that
+changes a result on one client only ends in an out-of-sync error.
+
+The plugin therefore has a **multiplayer guard** (`multiplayer_guard`, on by default). It reads the game's own
+multiplayer flag (the byte the engine's `is_multiplayer` trigger tests) twice a second. While the game is a multiplayer
+session, everything that runs inside or changes the simulation is forced off, whatever `stellaris_perf.ini` says:
+`opinion_cache`, `rule_cache`, `modifier_flush`, `flag_simd`, `flag_expiry_skip` and `fleet_parallel_grain1`. What stays
+is what only changes this client's display or measurements: the fleet manager window caches, `frame_smoothing` and the
+profilers. When the session ends, the ini settings apply again. Both transitions are written to `stellaris_perf.log`.
+
+- `multiplayer_guard=1`: the behaviour above (default).
+- `multiplayer_guard=0`: never override. Every player must then use identical settings, or an out-of-sync error is
+  likely; the log warns when this is active in a multiplayer session.
+- `multiplayer_guard=2`: act as if in multiplayer, to see the guard work in a single-player game.
+
+The guard has been checked in a single-player game (the flag reads as off, and `multiplayer_guard=2` switches the
+settings off and restores them, including the 5-byte fleet patch). It has **not been tested in a real multiplayer
+session**.
 
 ## Building
 

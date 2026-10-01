@@ -22,6 +22,7 @@ namespace rt {
     inline constexpr std::ptrdiff_t CEventScope_from = 0x38;
     inline constexpr std::ptrdiff_t CEventTarget_is_event_target = 0x198;
     inline constexpr std::ptrdiff_t CFleetManagerView_reinforce_due = 0x32B8;
+    inline constexpr std::ptrdiff_t CGameIdler_is_multiplayer = 0x180;
     inline constexpr std::ptrdiff_t CGameState_date_hours = 0xC0;
     inline constexpr std::ptrdiff_t CHasFlagTrigger_dynamic_size = 0x248;
     inline constexpr std::ptrdiff_t CHasFlagTrigger_flag = 0x220;
