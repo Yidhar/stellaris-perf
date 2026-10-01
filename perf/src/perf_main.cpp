@@ -89,49 +89,17 @@ DWORD WINAPI Worker(LPVOID) {
     }
     const std::string ini = IniPath();
     WriteDefaultIni(ini);
-    // The multiplayer flag is checked every 0.5 s, the ini and the statistics every 2 s.
-    perf::Settings user, last;
-    bool first = true, last_mp = false, last_detected = false;
+    // A game that is already running when the DLL is loaded started before the hooks existed: read its
+    // multiplayer flag now. Later games are checked by the hooks, when they start.
+    perf::CheckMultiplayer("DLL loaded");
     int ticks = 0;
     for (;;) {
-        if (first || ticks % 4 == 0) user = ReadIni(ini);
-        const bool detected = perf::IsMultiplayerSession();
-        const bool mp = user.multiplayer_guard == 2 || (user.multiplayer_guard == 1 && detected);
-        const perf::Settings s = mp ? perf::ForMultiplayer(user) : user;
-        const bool changed = first || s != last || mp != last_mp;
-        if (first || detected != last_detected || mp != last_mp) {
-            if (mp) {
-                perf::Log("%s: settings that touch the simulation are forced off (opinion_cache, rule_cache, "
-                          "modifier_flush, flag_simd, flag_expiry_skip, fleet_parallel_grain1)",
-                          detected ? "multiplayer session detected" : "multiplayer_guard=2 (test)");
-            } else if (detected) {
-                perf::Log("multiplayer session detected but multiplayer_guard=0: the settings are NOT overridden; "
-                          "every client must use identical settings or the game goes out of sync");
-            } else if (!first) {
-                perf::Log("single-player: the settings from the ini apply again");
-            }
+        const bool changed = perf::SetUserSettings(ReadIni(ini));
+        perf::Publish();
+        if (changed || ++ticks % 15 == 0) {
+            perf::Log("%s", perf::StatsLine().c_str());
         }
-        if (changed) {
-            perf::Apply(s);
-            perf::Log("settings: frame_smoothing=%d opinion_cache=%d rule_cache=%d fleet_manager_cache=%d "
-                      "fleet_manager_reinforce_ms=%d flag_simd=%d flag_expiry_skip=%d fleet_parallel_grain1=%d "
-                      "modifier_flush=%d profile=%d multiplayer=%d",
-                      s.frame_smoothing, (int)s.opinion_cache, (int)s.rule_cache, (int)s.fleet_manager_cache,
-                      s.fleet_manager_reinforce_ms, s.flag_simd, (int)s.flag_expiry_skip,
-                      (int)s.fleet_parallel_grain1, s.modifier_flush, (int)s.profile, (int)mp);
-            last = s;
-            first = false;
-        }
-        last_mp = mp;
-        last_detected = detected;
-        if (ticks % 4 == 0) {
-            perf::Publish();
-            if (changed || ticks % 60 == 0) {
-                perf::Log("%s", perf::StatsLine().c_str());
-            }
-        }
-        ++ticks;
-        if (WaitForSingleObject(g_unload_event, 500) == WAIT_OBJECT_0) break;
+        if (WaitForSingleObject(g_unload_event, 2000) == WAIT_OBJECT_0) break;
     }
     perf::Log("unload requested: %s", perf::StatsLine().c_str());
     perf::Uninstall();

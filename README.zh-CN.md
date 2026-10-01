@@ -94,13 +94,13 @@
 
 Stellaris 的多人游戏是锁步的：每个客户端模拟同一局游戏，并比对校验和，所以任何只在一个客户端上改变结果的东西，最终都会导致不同步。
 
-因此插件带有**多人保护**（`multiplayer_guard`，默认开启）。它每秒两次读取游戏自己的多人标志（引擎的 `is_multiplayer` 触发器检查的那个字节）。只要游戏处于多人会话中，所有运行在模拟内部或会改变模拟的设置，不管 `stellaris_perf.ini` 里怎么写，都会被强制关闭：`opinion_cache`、`rule_cache`、`modifier_flush`、`flag_simd`、`flag_expiry_skip` 和 `fleet_parallel_grain1`。保留的只有仅影响这个客户端显示或测量的部分：舰队管理器窗口的缓存、`frame_smoothing` 和各个分析开关。会话结束后，ini 里的设置重新生效。两次切换都会写进 `stellaris_perf.log`。
+因此插件带有**多人保护**（`multiplayer_guard`，默认开启）。它**只在每次游戏开始时**读取一次游戏自己的多人标志（引擎的 `is_multiplayer` 触发器检查的那个字节）：新星系开始时（`CGameState::OnNewGameStarted`）、存档开始时（`CGameState::OnSavedGameStarted`，加入多人游戏的客户端也走这条路径；引擎在那里用同一个标志决定是否触发 `on_single_player_save_game_load`），以及 DLL 加载时（针对加载之前就已经在运行的游戏）各检查一次。检查发生在游戏的开局脚本运行之前。如果这局游戏是多人会话，所有运行在模拟内部或会改变模拟的设置，不管 `stellaris_perf.ini` 里怎么写，都会被强制关闭：`opinion_cache`、`rule_cache`、`modifier_flush`、`flag_simd`、`flag_expiry_skip` 和 `fleet_parallel_grain1`。保留的只有仅影响这个客户端显示或测量的部分：舰队管理器窗口的缓存、`frame_smoothing` 和各个分析开关。再开始一局单人游戏时，ini 里的设置重新生效。每次检查和每次变化都会写进 `stellaris_perf.log`。
 
 - `multiplayer_guard=1`：上述行为（默认）。
 - `multiplayer_guard=0`：从不覆盖。这时所有玩家必须使用完全相同的设置，否则很可能出现不同步；在多人会话中处于这种状态时，日志会给出警告。
 - `multiplayer_guard=2`：假装处于多人会话，用来在单人游戏里看保护起作用。
 
-保护已在单人游戏里验证过（标志读出来是关闭；`multiplayer_guard=2` 会关掉这些设置并恢复，包括 5 字节的舰队补丁）。**没有在真实的多人会话里测试过。**
+保护已在单人游戏里验证过：存档开始时会读取这个标志（读出来是关闭）；`multiplayer_guard=2` 会关掉这些设置并恢复，包括 5 字节的舰队补丁。**没有在真实的多人会话里测试过。**
 
 ## 编译
 

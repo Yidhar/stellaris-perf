@@ -142,20 +142,24 @@ Stellaris multiplayer is lock-step: every client simulates the same game and com
 changes a result on one client only ends in an out-of-sync error.
 
 The plugin therefore has a **multiplayer guard** (`multiplayer_guard`, on by default). It reads the game's own
-multiplayer flag (the byte the engine's `is_multiplayer` trigger tests) twice a second. While the game is a multiplayer
-session, everything that runs inside or changes the simulation is forced off, whatever `stellaris_perf.ini` says:
-`opinion_cache`, `rule_cache`, `modifier_flush`, `flag_simd`, `flag_expiry_skip` and `fleet_parallel_grain1`. What stays
-is what only changes this client's display or measurements: the fleet manager window caches, `frame_smoothing` and the
-profilers. When the session ends, the ini settings apply again. Both transitions are written to `stellaris_perf.log`.
+multiplayer flag (the byte the engine's `is_multiplayer` trigger tests) **once each time a game starts**: when a new
+galaxy starts (`CGameState::OnNewGameStarted`), when a saved game starts (`CGameState::OnSavedGameStarted`, which is also
+how a client joining a multiplayer game starts; the engine uses the same flag there to decide whether
+`on_single_player_save_game_load` fires), and once when the DLL is loaded, for a game that was already running. The check
+runs before the game's start scripts do. If the game is a multiplayer session, everything that runs inside or changes
+the simulation is forced off, whatever `stellaris_perf.ini` says: `opinion_cache`, `rule_cache`, `modifier_flush`,
+`flag_simd`, `flag_expiry_skip` and `fleet_parallel_grain1`. What stays is what only changes this client's display or
+measurements: the fleet manager window caches, `frame_smoothing` and the profilers. Starting a single-player game
+again makes the ini settings apply again. Each check and each change is written to `stellaris_perf.log`.
 
 - `multiplayer_guard=1`: the behaviour above (default).
 - `multiplayer_guard=0`: never override. Every player must then use identical settings, or an out-of-sync error is
   likely; the log warns when this is active in a multiplayer session.
 - `multiplayer_guard=2`: act as if in multiplayer, to see the guard work in a single-player game.
 
-The guard has been checked in a single-player game (the flag reads as off, and `multiplayer_guard=2` switches the
-settings off and restores them, including the 5-byte fleet patch). It has **not been tested in a real multiplayer
-session**.
+The guard has been checked in a single-player game: the flag is read when a save starts (and reads as off), and
+`multiplayer_guard=2` switches the settings off and back on, including the 5-byte fleet patch. It has **not been tested
+in a real multiplayer session**.
 
 ## Building
 

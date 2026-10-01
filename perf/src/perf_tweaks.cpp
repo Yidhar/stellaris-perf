@@ -314,31 +314,6 @@ bool BuildRuleKey(const void* rule, const void* scope, RuleKey* key) {
     }
 }
 
-}  // namespace
-
-bool IsMultiplayerSession() {
-    if (!g_base) return false;
-    __try {
-        const uintptr_t idler = *(const uintptr_t*)(g_base + sdk::glob::g_CurrentInGameIdler);
-        return idler && *(const uint8_t*)(idler + sdk::rt::CGameIdler_is_multiplayer) != 0;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
-    }
-}
-
-Settings ForMultiplayer(const Settings& s) {
-    Settings r = s;
-    r.opinion_cache = false;
-    r.rule_cache = 0;
-    r.modifier_flush = 0;
-    r.flag_simd = 0;
-    r.flag_expiry_skip = false;
-    r.fleet_parallel_grain1 = false;
-    return r;
-}
-
-namespace {
-
 uint32_t ReadGameDay() {
     __try {
         const uintptr_t gs = *(const uintptr_t*)(g_base + sdk::glob::g_CurrentGameState);
@@ -404,6 +379,29 @@ constexpr size_t kFleetPowerSlots = 1u << 12;
 thread_local FleetPowerEntry* t_fleet_power = nullptr;
 
 // ---- detours ------------------------------------------------------------------------------
+
+// ---- multiplayer guard ---------------------------------------------------------------------------
+// The idler's multiplayer flag is set before a game starts (new game, loaded save, joining) and does not
+// change while it runs, so it is read once per start, in the two functions that start a game. The
+// detour reads it before the original runs, so the start scripts already run with the guard applied.
+std::atomic<int> g_in_start{ 0 };
+using FnGameStarted = void (*)(void* game_state);
+FnGameStarted g_orig_new_game = nullptr;
+FnGameStarted g_orig_saved_game = nullptr;
+
+void NewGameStartedDetour(void* game_state) {
+    g_in_start.fetch_add(1);
+    CheckMultiplayer("new game starting");
+    g_orig_new_game(game_state);
+    g_in_start.fetch_sub(1);
+}
+
+void SavedGameStartedDetour(void* game_state) {
+    g_in_start.fetch_add(1);
+    CheckMultiplayer("saved game starting");
+    g_orig_saved_game(game_state);
+    g_in_start.fetch_sub(1);
+}
 
 void HandleTurnTickDetour(void* game_state, void* commands) {
     g_in_tick.fetch_add(1);
@@ -1400,6 +1398,10 @@ bool Install(uintptr_t base) {
               "CModifierNodeManager::Update") && ok;
     ok = Hook(base + sdk::fn::CEventTarget_GetScope, (void*)&GetScopeDetour, (void**)&g_orig_get_scope,
               "CEventTarget::GetScope") && ok;
+    ok = Hook(base + sdk::fn::CGameState_OnNewGameStarted, (void*)&NewGameStartedDetour, (void**)&g_orig_new_game,
+              "CGameState::OnNewGameStarted") && ok;
+    ok = Hook(base + sdk::fn::CGameState_OnSavedGameStarted, (void*)&SavedGameStartedDetour,
+              (void**)&g_orig_saved_game, "CGameState::OnSavedGameStarted") && ok;
     ok = Hook(base + sdk::fn::CEventScope_Copy, (void*)&ScopeCopyDetour, (void**)&g_orig_scope_copy,
               "CEventScope::Copy") && ok;
     ok = Hook(base + sdk::fn::GetDynamicFlag, (void*)&GetDynamicFlagDetour, (void**)&g_orig_dyn_flag, "GetDynamicFlag") && ok;
@@ -1420,6 +1422,8 @@ void Uninstall() {
     const uint64_t done = g_ticks_done.load();
     for (int i = 0; i < 200 && (g_in_tick.load() != 0 || g_ticks_done.load() < done + 2); ++i) Sleep(10);
     for (int i = 0; i < 1000 && g_in_tick.load() != 0; ++i) Sleep(10);
+    // a game start lasts as long as the world takes to build: wait for it to be left (up to a minute)
+    for (int i = 0; i < 6000 && g_in_start.load() != 0; ++i) Sleep(10);
     Sleep(500);
     MH_Uninitialize();
     {
@@ -1484,6 +1488,89 @@ void Apply(const Settings& s) {
         MemoryBarrier();
         InterlockedIncrement64((volatile LONG64*)&shared->applied_seq);
     }
+}
+
+// ---- the settings in effect: the ini, as the multiplayer guard allows -----------------------------
+namespace {
+
+std::mutex g_cfg_mutex;
+Settings g_user, g_effective;
+bool g_user_set = false;
+bool g_mp_detected = false;  // the game being played is a multiplayer session (read when a game starts)
+bool g_mp_active = false;    // the guard is overriding the settings
+bool g_logged_unguarded = false;
+
+bool ReadMultiplayerFlag() {
+    if (!g_base) return false;
+    __try {
+        const uintptr_t idler = *(const uintptr_t*)(g_base + sdk::glob::g_CurrentInGameIdler);
+        return idler && *(const uint8_t*)(idler + sdk::rt::CGameIdler_is_multiplayer) != 0;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+// Everything that runs inside or changes the simulation is off; what stays (the fleet manager window
+// caches, frame smoothing, the profilers) only changes what this client displays or measures.
+Settings ForMultiplayer(const Settings& s) {
+    Settings r = s;
+    r.opinion_cache = false;
+    r.rule_cache = 0;
+    r.modifier_flush = 0;
+    r.flag_simd = 0;
+    r.flag_expiry_skip = false;
+    r.fleet_parallel_grain1 = false;
+    return r;
+}
+
+// g_cfg_mutex held. Applies the settings that are in effect now; true when they changed.
+bool Reapply() {
+    if (!g_user_set) return false;
+    const bool active = g_user.multiplayer_guard == 2 || (g_user.multiplayer_guard == 1 && g_mp_detected);
+    const Settings eff = active ? ForMultiplayer(g_user) : g_user;
+    if (active != g_mp_active) {
+        if (active) {
+            Log("%s: settings that touch the simulation are forced off (opinion_cache, rule_cache, modifier_flush, "
+                "flag_simd, flag_expiry_skip, fleet_parallel_grain1)",
+                g_mp_detected ? "multiplayer game" : "multiplayer_guard=2 (test)");
+        } else {
+            Log("single-player game: the settings from the ini apply");
+        }
+    }
+    const bool unguarded = g_mp_detected && g_user.multiplayer_guard == 0;
+    if (unguarded && !g_logged_unguarded) {
+        Log("multiplayer game but multiplayer_guard=0: the settings are NOT overridden; every client must use "
+            "identical settings or the game goes out of sync");
+    }
+    g_logged_unguarded = unguarded;
+    if (active == g_mp_active && eff == g_effective) return false;
+    g_mp_active = active;
+    g_effective = eff;
+    Apply(eff);
+    Log("settings: frame_smoothing=%d opinion_cache=%d rule_cache=%d fleet_manager_cache=%d "
+        "fleet_manager_reinforce_ms=%d flag_simd=%d flag_expiry_skip=%d fleet_parallel_grain1=%d modifier_flush=%d "
+        "profile=%d multiplayer_guard_active=%d",
+        eff.frame_smoothing, (int)eff.opinion_cache, eff.rule_cache, (int)eff.fleet_manager_cache,
+        eff.fleet_manager_reinforce_ms, eff.flag_simd, (int)eff.flag_expiry_skip, (int)eff.fleet_parallel_grain1,
+        eff.modifier_flush, (int)eff.profile, (int)active);
+    return true;
+}
+
+} // namespace
+
+bool SetUserSettings(const Settings& s) {
+    std::lock_guard<std::mutex> lock(g_cfg_mutex);
+    g_user = s;
+    g_user_set = true;
+    return Reapply();
+}
+
+void CheckMultiplayer(const char* why) {
+    const bool mp = ReadMultiplayerFlag();
+    std::lock_guard<std::mutex> lock(g_cfg_mutex);
+    Log("%s: multiplayer flag %d", why, (int)mp);
+    g_mp_detected = mp;
+    Reapply();
 }
 
 void Publish() {

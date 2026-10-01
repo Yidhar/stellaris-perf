@@ -49,23 +49,24 @@ struct Settings {
     // Profile of scope resolution (CEventTarget::GetScope, CEventScope::Copy) per game day
     bool scope_profile = false;
     int modifier_flush_max = 32;  // largest dirty set taking the serial path
-    // Multiplayer is lock-step: every client must compute the same result. 1 = while the game is a
-    // multiplayer session, ForMultiplayer() forces every setting that touches the simulation off;
+    // Multiplayer is lock-step: every client must compute the same result. 1 = when the game being
+    // played is a multiplayer session, every setting that touches the simulation is forced off;
     // 0 = never override (an out-of-sync error is likely if clients differ); 2 = act as if in
-    // multiplayer (to test the guard in a single-player game)
+    // multiplayer (to test the guard in a single-player game). Checked when a game starts (see
+    // CheckMultiplayer), not continuously.
     int multiplayer_guard = 1;
 
     bool operator==(const Settings&) const = default;
 };
 
-// True while the running game is a multiplayer session: the idler's multiplayer flag, the byte the
-// engine's own is_multiplayer trigger reads. False when it cannot be read.
-bool IsMultiplayerSession();
-// The settings that are safe in a multiplayer session: everything that runs inside or changes the
-// simulation is off (opinion_cache, rule_cache, modifier_flush, flag_simd, flag_expiry_skip,
-// fleet_parallel_grain1). The fleet manager window caches, frame smoothing and the profilers stay as
-// they are: they only change what this client displays or measures.
-Settings ForMultiplayer(const Settings& s);
+// The settings from the ini. Applies them (as the multiplayer guard allows) and returns true when the
+// settings in effect changed.
+bool SetUserSettings(const Settings& s);
+// Reads the game's multiplayer flag (the idler byte the engine's is_multiplayer trigger tests) and
+// applies the guard accordingly. Called once when the DLL is loaded and, before the start scripts run,
+// each time a game starts: CGameState::OnNewGameStarted (new galaxy) and OnSavedGameStarted (loaded
+// save, also a client joining a multiplayer game). `why` is only logged.
+void CheckMultiplayer(const char* why);
 
 // Checks the exe against the SDK and installs the hooks (they pass through while disabled).
 bool Install(uintptr_t base);
