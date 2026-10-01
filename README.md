@@ -177,7 +177,7 @@ and rebuild. Which game build a release was made for is printed in its release n
 
 ## Releases and CI
 
-Releases: <https://github.com/yidhar-k/stellaris-perf/releases>. The current one is **v0.1.0**, built by CI from the
+Releases: <https://github.com/yidhar-k/stellaris-perf/releases>. The latest one is built by CI from its
 tag, with both zips and their SHA-256 files attached.
 
 `.github/workflows/build-release.yml` builds both DLLs on every push and pull request and keeps the packaged zips as
