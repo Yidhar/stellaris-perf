@@ -1,0 +1,106 @@
+name: Build and release
+
+# Every push to main and every pull request builds stellaris_perf.dll and stellaris_bench.dll and keeps the
+# two packaged zips as workflow artifacts. Pushing a tag v* (for example v0.1.0) also publishes a GitHub
+# Release with both zips and their SHA-256 files.
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write  # creating the release
+
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # the scripts ship in the zips, so a syntax error must fail the build
+      - name: Check the Python scripts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $files = Get-ChildItem -Recurse -Filter *.py scripts, bench, tools | ForEach-Object FullName
+          python -m py_compile @files
+          if ($LASTEXITCODE -ne 0) { throw "py_compile failed" }
+
+      # ---- DLLs (MSVC x64; MinHook comes from FetchContent)
+      - name: Configure
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+      - name: Build stellaris_perf.dll and stellaris_bench.dll
+        run: cmake --build build --config Release --parallel
+
+      # ---- packages
+      - name: Package
+        id: package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $ver = if ($env:GITHUB_REF_TYPE -eq "tag") { $env:GITHUB_REF_NAME } else { "dev-$($env:GITHUB_SHA.Substring(0, 7))" }
+
+          # the DLLs only work with the stellaris.exe build the SDK was generated from
+          $ts = (Select-String -Path sdk/stellaris_sdk.hpp -Pattern "kExeTimestamp = (0x[0-9A-Fa-f]+)").Matches[0].Groups[1].Value
+          $built = [DateTimeOffset]::FromUnixTimeSeconds([Convert]::ToInt64($ts, 16)).UtcDateTime.ToString("yyyy-MM-dd HH:mm 'UTC'")
+          $note = @(
+            "Built for the stellaris.exe whose PE timestamp is $ts ($built), Stellaris 4.5.1 (Windows x64).",
+            "With any other build the DLL logs the mismatch and installs nothing."
+          )
+
+          # --- stellaris-perf: the plugin
+          $perf = "stellaris-perf-$ver"
+          $out = Join-Path "package" $perf
+          New-Item -ItemType Directory -Force -Path "$out/scripts" | Out-Null
+          Copy-Item build/Release/stellaris_perf.dll $out/
+          Copy-Item scripts/perfctl.py "$out/scripts/"
+          Copy-Item README.md, README.zh-CN.md, LICENSE $out/
+          $note | Set-Content -Encoding utf8 "$out/GAME_BUILD.txt"
+          Compress-Archive -Path $out -DestinationPath "package/$perf.zip"
+
+          # --- stellaris-perf-bench: benchmark DLL, scripts and the stress-mod generator
+          $bench = "stellaris-perf-bench-$ver"
+          $out = Join-Path "package" $bench
+          New-Item -ItemType Directory -Force -Path "$out/bench" | Out-Null
+          Copy-Item build/Release/stellaris_bench.dll, build/Release/stellaris_perf.dll $out/
+          foreach ($d in "scripts", "stress_mod", "tools") { Copy-Item -Recurse "bench/$d" "$out/bench/$d" }
+          Copy-Item bench/README.md, bench/README.zh-CN.md $out/
+          Copy-Item LICENSE $out/
+          $note | Set-Content -Encoding utf8 "$out/GAME_BUILD.txt"
+          Get-ChildItem -Recurse -Directory -Filter __pycache__ $out | Remove-Item -Recurse -Force
+          Compress-Archive -Path $out -DestinationPath "package/$bench.zip"
+
+          foreach ($n in $perf, $bench) {
+            $hash = (Get-FileHash "package/$n.zip" -Algorithm SHA256).Hash.ToLower()
+            "$hash  $n.zip" | Set-Content -Encoding ascii "package/$n.zip.sha256"
+          }
+
+          "version=$ver" >> $env:GITHUB_OUTPUT
+          "exe_timestamp=$ts" >> $env:GITHUB_OUTPUT
+          "exe_built=$built" >> $env:GITHUB_OUTPUT
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stellaris-perf-${{ steps.package.outputs.version }}
+          path: package/*.zip*
+
+      # ---- release (tags only)
+      - name: Publish release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: package/*.zip*
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          body: |
+            Built for **Stellaris 4.5.1** (Windows x64), `stellaris.exe` PE timestamp `${{ steps.package.outputs.exe_timestamp }}` (${{ steps.package.outputs.exe_built }}).
+            The DLLs only work with that exact game build.
+
+            - `stellaris-perf-*.zip`: the plugin (`stellaris_perf.dll`, `scripts/perfctl.py`). Start here.
+            - `stellaris-perf-bench-*.zip`: benchmark and stress-test tooling, only needed to measure or test.

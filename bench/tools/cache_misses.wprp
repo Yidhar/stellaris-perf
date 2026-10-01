@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Hardware-counter sampling for Stellaris: every 65536 L1D misses / cache misses / cycles, record the
+     instruction pointer. Start from an ELEVATED prompt:
+       wpr -start <repo>\bench\tools\cache_misses.wprp -filemode
+       (let the game run for ~30 s)
+       wpr -stop <repo>\bench\results\cache_misses.etl
+     Analyse (no elevation needed): python <repo>\bench\tools\pmc_report.py <etl> -->
+<WindowsPerformanceRecorder Version="1.0">
+  <Profiles>
+    <SystemCollector Id="SC" Name="NT Kernel Logger">
+      <BufferSize Value="1024"/>
+      <Buffers Value="1024"/>
+    </SystemCollector>
+    <SystemProvider Id="SP">
+      <Keywords>
+        <Keyword Value="ProcessThread"/>
+        <Keyword Value="Loader"/>
+        <Keyword Value="PmcProfile"/>
+      </Keywords>
+    </SystemProvider>
+    <HardwareCounter Id="HC">
+      <SampledCounters>
+        <SampledCounter Value="DcacheMisses" Interval="65536"/>
+        <SampledCounter Value="CacheMisses" Interval="65536"/>
+        <SampledCounter Value="TotalCycles" Interval="1048576"/>
+      </SampledCounters>
+    </HardwareCounter>
+    <Profile Id="StellarisCacheMisses.Verbose.File" Name="StellarisCacheMisses"
+             Description="Stellaris cache-miss sampling" LoggingMode="File" DetailLevel="Verbose">
+      <Collectors>
+        <SystemCollectorId Value="SC">
+          <SystemProviderId Value="SP"/>
+          <HardwareCounterId Value="HC"/>
+        </SystemCollectorId>
+      </Collectors>
+    </Profile>
+  </Profiles>
+</WindowsPerformanceRecorder>

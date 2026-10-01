@@ -1,0 +1,24 @@
+# build output
+build/
+package/
+*.dll
+*.dll.old
+*.obj
+*.lib
+*.exp
+*.pdb
+*.ilk
+
+# Python
+__pycache__/
+*.py[cod]
+
+# benchmark output, generated test mod
+bench/results/
+bench/stress_mod/out*/
+*.etl
+
+# IDE
+.vs/
+.vscode/
+.idea/
