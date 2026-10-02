@@ -24,7 +24,7 @@ stress-test tooling used to find and check these optimizations.
 
 ## Install and use
 
-1. Download `stellaris-perf-<version>.zip` from the [Releases page](https://github.com/yidhar-k/stellaris-perf/releases)
+1. Download `stellaris-perf-<version>.zip` from the [Releases page](https://github.com/Yidhar/stellaris-perf/releases)
    and unpack it anywhere. The `.sha256` file next to it holds the checksum.
 2. Start Stellaris (a save may or may not be loaded) and run
    `python scripts\perfctl.py load`
@@ -181,7 +181,7 @@ and rebuild. Which game build a release was made for is printed in its release n
 
 ## Releases and CI
 
-Releases: <https://github.com/yidhar-k/stellaris-perf/releases>. The latest one is built by CI from its
+Releases: <https://github.com/Yidhar/stellaris-perf/releases>. The latest one is built by CI from its
 tag, with both zips and their SHA-256 files attached.
 
 `.github/workflows/build-release.yml` builds both DLLs on every push and pull request and keeps the packaged zips as
