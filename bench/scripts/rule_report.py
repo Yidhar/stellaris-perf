@@ -5,9 +5,10 @@
 Rule names: CScriptedRule::Evaluate builds "CGameRules::<name>.Evaluate" from the rule's index
 (int at the start of the rule): index -> int table at RVA RULE_INDEX_TABLE -> row of the string
 table object RULE_NAME_TABLE (+0x70 rows, 0x30 bytes each, std::string at +0x10).
-The two RVAs were read from 4.5.1's CScriptedRule::Evaluate (0x5B71D0: `lea rcx, [rip+..]` before
-`movsxd rdi, [rcx+rax*4]`, and the function-local static returned by 0x1BB5650). This is a throwaway
-analysis tool, like the other readers here; re-derive them after a game patch.
+The two RVAs are read from the exe's CScriptedRule::Evaluate (sdk::fn::CScriptedRule_Evaluate: the `lea rcx, [rip+..]`
+before `movsxd rdi, [rcx+rax*4]` is the index table; the first call after it is an accessor whose `lea rax, [rip+..]` is
+the string table object). They are listed per exe build below, and the tool refuses a build that is not listed: this is a
+throwaway analysis tool, so re-derive the two RVAs after a game patch and add the build.
 """
 import csv
 import ctypes
@@ -16,10 +17,13 @@ import struct
 import sys
 from collections import defaultdict
 
-from benchlib import GAME_DIR, game_pid
+from benchlib import PERF_LOGS, game_pid
 
-RULE_INDEX_TABLE = 0x2831870
-RULE_NAME_TABLE = 0x35F0AC0
+# PE TimeDateStamp of stellaris.exe -> (RULE_INDEX_TABLE, RULE_NAME_TABLE)
+TABLES = {
+    0x6AB5181D: (0x2831870, 0x35F0AC0),  # 4.5.1
+    0x6ABEAA3F: (0x2832870, 0x35F22F0),  # 4.5.2
+}
 TOP = int(sys.argv[1]) if len(sys.argv) > 1 else 25
 
 k32 = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -47,6 +51,12 @@ def image_base():
 
 
 BASE = image_base()
+_e_lfanew = struct.unpack("<I", rd(BASE + 0x3C, 4))[0]
+EXE_TIMESTAMP = struct.unpack("<I", rd(BASE + _e_lfanew + 8, 4))[0]
+if EXE_TIMESTAMP not in TABLES:
+    raise SystemExit(f"rule_report.py has no table addresses for the exe build 0x{EXE_TIMESTAMP:08X}; derive them (see the "
+                     "docstring) and add the build to TABLES")
+RULE_INDEX_TABLE, RULE_NAME_TABLE = TABLES[EXE_TIMESTAMP]
 rows = struct.unpack("<Q", rd(BASE + RULE_NAME_TABLE + 0x70, 8))[0]
 
 
@@ -62,7 +72,7 @@ def rule_name(index):
 
 
 stats = defaultdict(lambda: defaultdict(lambda: [0, 0]))
-with open(os.path.join(GAME_DIR, "stellaris_perf_rules.csv"), encoding="utf-8") as f:
+with open(os.path.join(PERF_LOGS, "stellaris_perf_rules.csv"), encoding="utf-8") as f:
     for r in csv.DictReader(f):
         s = stats[int(r["rule_index"])][r["path"]]
         s[0] += int(r["calls"])

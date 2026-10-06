@@ -8,8 +8,30 @@ import os
 import struct
 import time
 
-GAME_DIR = os.environ.get("STELLARIS_DIR", r"E:\Program Files (x86)\Steam\steamapps\common\Stellaris")
-PERF_INI = os.path.join(GAME_DIR, "stellaris_perf.ini")
+from stellaris_paths import game_dir, require_game_dir, stellaris_data_dir  # noqa: F401
+
+GAME_DIR = game_dir()  # None when the game is not found; scripts that need it call require_game_dir()
+REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+
+
+def perf_dir():
+    """The folder stellaris_perf.dll is loaded from, which is also where it reads config\\stellaris_perf.ini and writes logs\\:
+    STELLARIS_PERF_DIR, else the folder assembled by the build (build\\plugin\\stellaris-perf), else the installed plugin
+    (<Documents>\\Paradox Interactive\\Stellaris\\plugins\\stellaris-perf)."""
+    env = os.environ.get("STELLARIS_PERF_DIR")
+    if env:
+        return env
+    installed = os.path.join(stellaris_data_dir(), "plugins", "stellaris-perf")
+    built = os.path.join(REPO, "build", "plugin", "stellaris-perf")
+    for p in (built, installed):
+        if os.path.exists(os.path.join(p, "stellaris_perf.dll")):
+            return p
+    return installed
+
+
+PERF_DIR = perf_dir()
+PERF_INI = os.path.join(PERF_DIR, "config", "stellaris_perf.ini")
+PERF_LOGS = os.path.join(PERF_DIR, "logs")
 BENCH_PIPE = r"\\.\pipe\stellaris_bench"
 
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -132,6 +154,7 @@ def write_perf_ini(frame_smoothing=-1, opinion_cache=0, rule_cache=0, fleet_mana
                    fleet_manager_reinforce_ms=0, flag_simd=0, flag_expiry_skip=0, profile=0, rule_profile=0,
                    modifier_flush=0, modifier_flush_max=32, fleet_parallel_grain1=0,
                    scope_profile=0):
+    os.makedirs(os.path.dirname(PERF_INI), exist_ok=True)
     with open(PERF_INI, "w") as f:
         f.write("[perf]\n"
                 f"frame_smoothing={frame_smoothing}\n"

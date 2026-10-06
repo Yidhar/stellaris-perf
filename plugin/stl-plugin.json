@@ -1,0 +1,15 @@
+{
+  "schema": 2,
+  "id": "stellaris-perf",
+  "name": "Performance",
+  "version": "0.2.0",
+  "description": "Faster fleet updates, fleet manager window and flag checks, optional per-day caches; a multiplayer guard keeps the simulation identical on every client.",
+  "dll": "stellaris_perf.dll",
+  "game": { "exe_timestamps": ["0x6ABEAA3F"] },
+  "load": { "wait": "window", "delay_ms": 1500 },
+  "config": [
+    { "file": "stellaris_perf.ini", "default": "defaults/stellaris_perf.ini", "title": "Performance", "substitute": false }
+  ],
+  "update": { "github": "Yidhar/stellaris-perf", "asset": "stellaris-perf-v*.zip" },
+  "homepage": "https://github.com/Yidhar/stellaris-perf"
+}

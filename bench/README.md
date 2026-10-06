@@ -8,13 +8,21 @@ Automated performance measurement for `stellaris_perf.dll`. Nothing here is need
 |---|---|
 | `stellaris_bench.dll` | Patches the `IDXGISwapChain::Present` slot in DXGI's swap chain vtable to count frames, and runs one-line commands on the game's main thread at the next frame. Own pipe `\\.\pipe\stellaris_bench`; commands `status`, `pause 0/1`, `speed 0..5`. Engine addresses come from the generated SDK. |
 | Stats of `stellaris_perf.dll` | Read-only shared memory `Local\stellaris_perf_stats_<pid>` (`perf/include/perf_shared.hpp`): the settings in effect, `CFleetManagerView::Update` call counts, cache and throttle counters. The plugin itself has no control channel; settings only come from `stellaris_perf.ini`. |
-| `scripts/dllctl.py` | Loads or unloads both DLLs (remote `LoadLibraryW`; unloading asks the DLL to unload itself, never `FreeLibrary` from outside). |
+| `scripts/dllctl.py` | Loads or unloads both DLLs (remote `LoadLibraryW`; unloading asks the DLL to unload itself, never `FreeLibrary` from outside). The plugin DLL is loaded from its plugin folder, so it finds `config\` and `logs\` there (see below). |
 | `scripts/bench_fm.py` | A/B in one continuous run, no save reloads needed. |
 | `scripts/game_session.py` | Automatic save loading: restarts the game on a chosen save, loads the DLLs, pauses, opens the fleet manager. |
+| `scripts/stellaris_paths.py` | Finds the game folder (Steam libraries) and the Documents folder; used by the other scripts. |
 | `scripts/rule_report.py` | Names the rules in `stellaris_perf_rules.csv` (`rule_profile=1`) from live game memory. |
 | `stress_mod/gen_stress_mod.py` | Generates the stress-test mod (below). |
 | `tools/` | WPR profile and report script for hardware-counter (cache miss) sampling. |
 | `results/` | One JSON per benchmark run (created on first run, not tracked). |
+
+**Where the plugin's files are.** `stellaris_perf.dll` reads `config\stellaris_perf.ini` and writes `logs\` in the folder
+it was loaded from. The scripts use `STELLARIS_PERF_DIR` if it is set, else `build\plugin\stellaris-perf` of a source checkout
+(the folder the build assembles), else the installed plugin,
+`Documents\Paradox Interactive\Stellaris\plugins\stellaris-perf`. `bench_fm.py` writes the settings it tests into that
+`config\stellaris_perf.ini`, and `rule_report.py` reads `logs\stellaris_perf_rules.csv` there. (`stellaris_bench.dll`
+is not a plugin; it writes its small log next to the game's exe.)
 
 Why a vtable patch and not an inline hook: two inline hooks on the same function crash the game when unloaded in the
 wrong order (one writes back a jump into an already unloaded DLL). Patching a vtable slot does not interfere with
@@ -22,7 +30,9 @@ inline hooks of other tools.
 
 ## Usage
 
-Build both DLLs (see the main README), then, with the game running and a save loaded:
+Build both DLLs (see the main README), then, with the game running and a save loaded (the scripts load the DLLs
+themselves; a game started by the launcher with the plugin enabled already has `stellaris_perf.dll`, and `dllctl.py`
+sees that):
 
 ```powershell
 python bench\scripts\dllctl.py load all        # perf and bench into the game
@@ -57,7 +67,10 @@ python bench\scripts\bench_fm.py --reload arena_base --warmup 5 --blocks 10 --da
 - `--reload` starts every ABBA block from the same save moment, alternating ABBA and BAAB between blocks. The first
   dozens of days after a load drift non-linearly, so the output also gives an order-adjusted estimate.
 
-Set `STELLARIS_DIR` if the game is not in the default Steam folder.
+Nothing about this machine is assumed: the game folder is found in the Steam libraries (the registry and `libraryfolders.vdf`) and
+`Documents` comes from the shell (`scripts/stellaris_paths.py`). Set `STELLARIS_DIR` if the game is somewhere else,
+`STELLARIS_PERF_DIR` to use another plugin folder, and `XPERF` for `tools/pmc_report.py` if `xperf.exe` is not on `PATH` or in the
+Windows Kit.
 
 ## Stress-test mod
 

@@ -7,14 +7,14 @@
 #include <cstdint>
 
 namespace sdk {
-inline constexpr uint32_t kExeTimestamp = 0x6AB5181D;  // PE TimeDateStamp this SDK was dumped from
+inline constexpr uint32_t kExeTimestamp = 0x6ABEAA3F;  // PE TimeDateStamp this SDK was dumped from
 
 namespace glob {
-    inline constexpr uintptr_t CRandom_Forbidden = 0x2812CF9;  // CRandom_Forbidden  score=anchor live=anchor
-    inline constexpr uintptr_t UpdateShipParallel_GrainClamp = 0x2525BA;  // UpdateShipParallel_GrainClamp  score=anchor live=anchor
-    inline constexpr uintptr_t g_CurrentGameState = 0x3113A08;  // g_CurrentGameState  score=0.768 live=not-checked
-    inline constexpr uintptr_t g_CurrentInGameIdler = 0x3114180;  // g_CurrentInGameIdler  score=0.773 live=not-checked
-    inline constexpr uintptr_t g_bFrameSmoothing = 0x2806830;  // g_bFrameSmoothing  score=anchor live=anchor
+    inline constexpr uintptr_t CRandom_Forbidden = 0x2813CFD;  // CRandom_Forbidden  score=anchor live=anchor
+    inline constexpr uintptr_t UpdateShipParallel_GrainClamp = 0x252BEA;  // UpdateShipParallel_GrainClamp  score=anchor live=anchor
+    inline constexpr uintptr_t g_CurrentGameState = 0x3114700;  // g_CurrentGameState  score=0.771 live=static
+    inline constexpr uintptr_t g_CurrentInGameIdler = 0x3114E68;  // g_CurrentInGameIdler  score=0.773 live=static
+    inline constexpr uintptr_t g_bFrameSmoothing = 0x2807830;  // g_bFrameSmoothing  score=anchor live=anchor
 }  // namespace glob
 
 namespace rt {
@@ -29,10 +29,10 @@ namespace rt {
     inline constexpr std::ptrdiff_t CHasFlagTrigger_vt_GetFlags = 0xF0;
     inline constexpr std::ptrdiff_t CInGameIdler_paused = 0x594;
     inline constexpr std::ptrdiff_t CInGameIdler_speed = 0x590;
-    inline constexpr std::ptrdiff_t CModifierNodeManager_batch = 0x989;
-    inline constexpr std::ptrdiff_t CModifierNodeManager_busy = 0x940;
-    inline constexpr std::ptrdiff_t CModifierNodeManager_has_invalid = 0x941;
-    inline constexpr std::ptrdiff_t CModifierNodeManager_masked = 0x988;
+    inline constexpr std::ptrdiff_t CModifierNodeManager_batch = 0x949;
+    inline constexpr std::ptrdiff_t CModifierNodeManager_busy = 0x900;
+    inline constexpr std::ptrdiff_t CModifierNodeManager_has_invalid = 0x901;
+    inline constexpr std::ptrdiff_t CModifierNodeManager_masked = 0x948;
     inline constexpr std::ptrdiff_t CModifierNodeManager_slot_count = 0x14;
     inline constexpr std::ptrdiff_t CModifierNodeManager_slot_node = 0x8;
     inline constexpr std::ptrdiff_t CModifierNodeManager_slots = 0x8;
@@ -49,25 +49,31 @@ namespace rt {
 }  // namespace rt
 
 namespace fn {
-    inline constexpr uintptr_t CCountry_CalcOurOpinionOfOther = 0x705C90;
-    inline constexpr uintptr_t CEventScope_Copy = 0x393EE0;
-    inline constexpr uintptr_t CEventTarget_GetScope = 0x352950;
-    inline constexpr uintptr_t CFleetManagerTemplateGridController_Update = 0x149D5C0;
-    inline constexpr uintptr_t CFleetManagerView_Update = 0x112A050;
-    inline constexpr uintptr_t CFleet_CalcMilitaryPower = 0xC7EFF0;
-    inline constexpr uintptr_t CGameState_HandleTurnTick = 0x2511D0;
-    inline constexpr uintptr_t CGameState_OnNewGameStarted = 0x270AC0;
-    inline constexpr uintptr_t CGameState_OnSavedGameStarted = 0x271340;
-    inline constexpr uintptr_t CHasFlagTrigger_ActualEvaluate = 0x195A140;
-    inline constexpr uintptr_t CInGameIdler_SetGameSpeed = 0x935BE0;
-    inline constexpr uintptr_t CInGameIdler_SetPaused = 0x9362D0;
-    inline constexpr uintptr_t CModifierNodeBase_Update = 0x237C90;
-    inline constexpr uintptr_t CModifierNodeManager_AddInvalid = 0x239050;
-    inline constexpr uintptr_t CModifierNodeManager_Update = 0x29D3C0;
-    inline constexpr uintptr_t CPdxIntegerFlags_UpdateFlags = 0x1A7D250;
-    inline constexpr uintptr_t CRandomLog_Get = 0x1B47DE0;
-    inline constexpr uintptr_t CScriptedRule_Evaluate = 0x5B71D0;
-    inline constexpr uintptr_t GetDynamicFlag = 0x9F8A10;
+    inline constexpr uintptr_t CCountry_CalcOurOpinionOfOther = 0x705620;
+    inline constexpr uintptr_t CEventScope_Copy = 0x394500;
+    inline constexpr uintptr_t CEventTarget_GetScope = 0x352F50;
+    inline constexpr uintptr_t CFleetManagerTemplateGridController_Update = 0x149DE90;
+    inline constexpr uintptr_t CFleetManagerView_Update = 0x112A960;
+    inline constexpr uintptr_t CFleet_CalcMilitaryPower = 0xC7F9A0;
+    inline constexpr uintptr_t CGameState_HandleTurnTick = 0x251800;
+    inline constexpr uintptr_t CGameState_OnNewGameStarted = 0x2710D0;
+    inline constexpr uintptr_t CGameState_OnSavedGameStarted = 0x271950;
+    inline constexpr uintptr_t CHasFlagTrigger_ActualEvaluate = 0x195A7A0;
+    inline constexpr uintptr_t CInGameIdler_SetGameSpeed = 0x934C50;
+    inline constexpr uintptr_t CInGameIdler_SetPaused = 0x935340;
+    inline constexpr uintptr_t CModifierNodeBase_Update = 0x238300;
+    inline constexpr uintptr_t CModifierNodeManager_AddInvalid = 0x2396C0;
+    inline constexpr uintptr_t CModifierNodeManager_Update = 0x29D9D0;
+    inline constexpr uintptr_t CPdxIntegerFlags_UpdateFlags = 0x1A7D8C0;
+    inline constexpr uintptr_t CRandomLog_Get = 0x1B481F0;
+    inline constexpr uintptr_t CScriptedRule_Evaluate = 0x5B7430;
+    inline constexpr uintptr_t GetDynamicFlag = 0x9F7A80;
 }  // namespace fn
+
+namespace ent {
+namespace CFleet {
+    inline constexpr std::ptrdiff_t ships = 0x320;  // tok 0x2c15 ref_array<unsigned_int>  [check: positional]
+}
+}  // namespace ent
 
 }  // namespace sdk

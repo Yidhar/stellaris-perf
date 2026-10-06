@@ -21,16 +21,20 @@ namespace perf {
 namespace {
 std::mutex g_log_mutex;
 FILE* g_log = nullptr;
+std::wstring g_log_dir;  // <plugin folder>\logs; empty = no files
+}
+
+void SetLogDirectory(const std::wstring& dir) {
+    std::lock_guard<std::mutex> lock(g_log_mutex);
+    g_log_dir = dir;
 }
 
 void Log(const char* fmt, ...) {
     std::lock_guard<std::mutex> lock(g_log_mutex);
     if (!g_log) {
-        char path[MAX_PATH];
-        GetModuleFileNameA(nullptr, path, MAX_PATH);
-        char* slash = strrchr(path, '\\');
-        if (slash) strcpy(slash + 1, "stellaris_perf.log");
-        g_log = fopen(path, "a");
+        if (g_log_dir.empty()) return;
+        CreateDirectoryW(g_log_dir.c_str(), nullptr);
+        g_log = _wfopen((g_log_dir + L"\\stellaris_perf.log").c_str(), L"a");
         if (!g_log) return;
     }
     SYSTEMTIME t;
@@ -281,7 +285,8 @@ uint64_t HashKey(const RuleKey& k) {
 //   +0x30 from, +0x38 root, +0x40 prev (each points at the scope itself when unset),
 //   +0x70 CPdxHybridArray<CEventScopeParameter,4> with its size at +0x84.
 constexpr size_t kScopeType = 0x08, kScopeId = 0x10, kScopeLocal = 0x1C;
-constexpr size_t kScopeFrom = 0x30, kScopeRoot = 0x38, kScopePrev = 0x40, kScopeParamCount = 0x84;
+constexpr size_t kScopeRoot = 0x30, kScopeFrom = (size_t)sdk::rt::CEventScope_from, kScopePrev = 0x40, kScopeParamCount = 0x84;
+static_assert(kScopeFrom == 0x38, "CEventScope::from moved: re-check the other scope offsets too");
 
 void ReadSlot(const unsigned char* s, ScopeId* out) {
     out->type = *(const uint64_t*)(s + kScopeType);
@@ -317,7 +322,7 @@ bool BuildRuleKey(const void* rule, const void* scope, RuleKey* key) {
 uint32_t ReadGameDay() {
     __try {
         const uintptr_t gs = *(const uintptr_t*)(g_base + sdk::glob::g_CurrentGameState);
-        return gs ? *(const uint32_t*)(gs + 0xC0) / 24 : 0;  // the date is stored in hours
+        return gs ? *(const uint32_t*)(gs + sdk::rt::CGameState_date_hours) / 24 : 0;  // the date is stored in hours
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return 0;
     }
@@ -366,11 +371,15 @@ void DestroyShared() {
 }
 uint64_t g_last_reinforce = 0;  // GetTickCount64 of the last recalculation let through (main thread)
 
+// A CPdxArray member: the data pointer is at the member's offset, the count a fixed distance after it (the flag
+// containers' ids pointer and count, the same array type).
+constexpr ptrdiff_t kArrayCount = sdk::rt::CPdxIntegerFlags_count - sdk::rt::CPdxIntegerFlags_ids;
+
 struct FleetPowerEntry {
     const void* fleet;
-    uint64_t ships;  // ship array pointer (+0x320)
+    uint64_t ships;  // ship array pointer (sdk::ent::CFleet::ships)
     uint64_t stamp;  // generation << 32 | real-time second
-    int32_t count;   // ship count (+0x32c)
+    int32_t count;   // ship count (the array's count, kArrayCount after the pointer)
     int32_t type;
     int64_t value;
     bool flag;
@@ -660,11 +669,14 @@ bool RuleEvaluateDetour(const void* rule, void* scope, void* reason, uint8_t sho
 }
 
 void DumpRuleProfile() {
-    char path[MAX_PATH];
-    GetModuleFileNameA(nullptr, path, MAX_PATH);
-    char* slash = strrchr(path, '\\');
-    if (slash) strcpy(slash + 1, "stellaris_perf_rules.csv");
-    FILE* f = fopen(path, "w");
+    std::wstring dir;
+    {
+        std::lock_guard<std::mutex> lock(g_log_mutex);
+        dir = g_log_dir;
+    }
+    if (dir.empty()) return;
+    CreateDirectoryW(dir.c_str(), nullptr);
+    FILE* f = _wfopen((dir + L"\\stellaris_perf_rules.csv").c_str(), L"w");
     if (!f) return;
     fprintf(f, "rule_index,path,calls,timed_calls,cycles,ns_per_timed_call,cache_enabled\n");
     static const char* names[kRulePaths] = { "orig", "bypass", "hit", "miss" };
@@ -723,8 +735,8 @@ int64_t* FleetPowerDetour(const void* fleet, int64_t* out, int type, bool flag) 
     uint64_t ships;
     int32_t count;
     __try {
-        ships = *(const uint64_t*)((const char*)fleet + 0x320);
-        count = *(const int32_t*)((const char*)fleet + 0x32c);
+        ships = *(const uint64_t*)((const char*)fleet + sdk::ent::CFleet::ships);
+        count = *(const int32_t*)((const char*)fleet + sdk::ent::CFleet::ships + kArrayCount);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         ++counts.bypass;
         counts.Tick(g_fm_stats);
@@ -913,7 +925,7 @@ void AddInvalidDetour(void* mgr, uint32_t node_id, uint32_t category) {
 // Each node points at its node type (+0): the category id at +8 and the categories it depends on
 // as an int range [+0x10, +0x18). Read from live nodes once per manager and checked (sane ranges,
 // ids < 64, no cycle); if the check fails the fast path stays off. (Offsets verified against live
-// memory in 4.5.1, not anchored in code: the check is the guard.)
+// memory in 4.5.1 and 4.5.2, not anchored in code: the check is the guard.)
 constexpr int kMaxCat = 64;
 constexpr ptrdiff_t kTypeCategory = 0x8, kTypeDepsBegin = 0x10, kTypeDepsEnd = 0x18;
 int8_t g_cat_rank[kMaxCat];
@@ -1499,6 +1511,7 @@ bool g_user_set = false;
 bool g_mp_detected = false;  // the game being played is a multiplayer session (read when a game starts)
 bool g_mp_active = false;    // the guard is overriding the settings
 bool g_logged_unguarded = false;
+bool g_applied_once = false;  // the first settings are applied even when they equal the built-in defaults
 
 bool ReadMultiplayerFlag() {
     if (!g_base) return false;
@@ -1543,7 +1556,8 @@ bool Reapply() {
             "identical settings or the game goes out of sync");
     }
     g_logged_unguarded = unguarded;
-    if (active == g_mp_active && eff == g_effective) return false;
+    if (g_applied_once && active == g_mp_active && eff == g_effective) return false;
+    g_applied_once = true;
     g_mp_active = active;
     g_effective = eff;
     Apply(eff);

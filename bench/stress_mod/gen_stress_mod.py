@@ -85,9 +85,12 @@ import json
 import os
 import re
 import shutil
+import sys
 
-DOCS = os.path.join(os.path.expanduser("~"), "Documents", "Paradox Interactive", "Stellaris")
-GAME = os.environ.get("STELLARIS_DIR", r"E:\Program Files (x86)\Steam\steamapps\common\Stellaris")
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts"))
+from stellaris_paths import require_game_dir, stellaris_data_dir  # noqa: E402
+
+DOCS = stellaris_data_dir()
 NAME = "zz_perf_stress"
 PARAMS = {
     "ship_period": 10,    # M1: days between ship modifier storms (per country chain)
@@ -788,7 +791,7 @@ country_event = {{
         for k, v in hooks.items() if v)
 
     # M6 game rules: vanilla definition + checks that never change the result
-    rules = open(os.path.join(GAME, "common", "game_rules", "00_rules.txt"), encoding="utf-8-sig").read()
+    rules = open(os.path.join(require_game_dir(), "common", "game_rules", "00_rules.txt"), encoding="utf-8-sig").read()
     rules = rules.replace("\r\n", "\n")
     sensors = block(rules, "system_blocks_sensors")  # OR: add checks that are always false
     extra_or = "".join(f"\t\thas_star_flag = perfstress_rule_{i}\n" for i in range(1, p["rule_checks"] + 1))

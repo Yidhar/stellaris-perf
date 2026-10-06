@@ -5,10 +5,12 @@
 
 namespace perf {
 
-// Log file next to stellaris.exe (stellaris_perf.log).
+// Where the log files go: <plugin folder>\logs (stellaris_perf.log, stellaris_perf_rules.csv). Set once by the DLL
+// entry, before the first Log; with no folder nothing is written (the game folder is never used).
+void SetLogDirectory(const std::wstring& dir);
 void Log(const char* fmt, ...);
 
-// Runtime performance tweaks, all off until enabled in stellaris_perf.ini:
+// Runtime performance tweaks (config\stellaris_perf.ini of the plugin folder):
 //  * frame_smoothing: the engine global g_bFrameSmoothing (the `smooth` console command). When on,
 //    the game renders frames in the middle of a tick (smoother UI, a slower simulation).
 //  * opinion_cache: memoizes CCountry::CalcOurOpinionOfOther(other, reason = nullptr) per game day.
@@ -38,7 +40,7 @@ struct Settings {
     // the others, per game day (reported by StatsLine).
     bool profile = false;
     // Per-rule profile of CScriptedRule::Evaluate: calls / cycles per rule index and path, written to
-    // stellaris_perf_rules.csv next to the exe every ~30 s.
+    // logs\stellaris_perf_rules.csv of the plugin folder every ~30 s.
     bool rule_profile = false;
     // Modifier graph flush: 0 = the game's parallel job always, 1 = rebuild small, fully known dirty
     // sets serially on the main thread, 2 = verify (both, node contents compared)

@@ -15,7 +15,7 @@ import os
 import sys
 import time
 
-from benchlib import game_pid, kernel32, module_loaded
+from benchlib import PERF_DIR, game_pid, kernel32, module_loaded
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
@@ -29,7 +29,8 @@ def _dll(name):
 
 
 DLLS = {
-    "perf": ("stellaris_perf.dll", _dll("stellaris_perf.dll")),
+    # the plugin is loaded from its own folder (benchlib.perf_dir): that is where it finds config\\ and writes logs\\
+    "perf": ("stellaris_perf.dll", os.path.join(PERF_DIR, "stellaris_perf.dll")),
     "bench": ("stellaris_bench.dll", _dll("stellaris_bench.dll")),
 }
 

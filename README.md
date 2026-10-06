@@ -2,21 +2,23 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-A performance plugin for **Stellaris 4.5.1** (Windows x64, the `-dx11` build): a small DLL that is loaded into
-`stellaris.exe` and replaces a few slow engine code paths with equivalent, cheaper ones. It needs no mod, does
-not touch save files, and does not depend on any other tool. The repository also contains the benchmark and
-stress-test tooling used to find and check these optimizations.
+A performance plugin for **Stellaris 4.5.2** (Windows x64, the `-dx11` build): a small DLL that is loaded into
+`stellaris.exe` and replaces a few slow engine code paths with equivalent, cheaper ones. It needs no mod and does not
+touch save files. It is a plugin of the **Stellaris launcher** (plugin spec v2): the launcher installs it, shows its
+settings file for editing, checks that it was made for the installed game build, and loads it when it starts the game.
+The repository also contains the benchmark and stress-test tooling used to find and check these optimizations.
 
 | Release file | Contents |
 |---|---|
-| `stellaris-perf-<version>.zip` | `stellaris_perf.dll`, `scripts/perfctl.py` (load / unload), this README |
-| `stellaris-perf-bench-<version>.zip` | `stellaris_bench.dll`, the benchmark scripts and the stress-mod generator (see [`bench/`](bench/README.md)) |
+| `stellaris-perf-<version>.zip` | **the plugin folder itself**: `stl-plugin.json`, `stellaris_perf.dll`, `defaults\stellaris_perf.ini`, this README |
+| `stellaris-perf-bench-<version>.zip` | `stellaris_bench.dll`, the benchmark scripts and the stress-mod generator (see [`bench/`](bench/README.md)); not a plugin |
 
 ## Compatibility
 
-- Works with **one exact game build**: the `stellaris.exe` whose PE timestamp is printed in the release notes
-  (checked against the SDK at load time). With any other build the DLL logs the mismatch and installs nothing.
-  After a game patch the SDK subset has to be regenerated and the DLL rebuilt (see [Building](#building)).
+- Works with **one exact game build**: the `stellaris.exe` whose PE timestamp is in the manifest (`game.exe_timestamps`)
+  and in the release notes. The launcher does not load the plugin into another build, and the DLL checks it again
+  against the SDK and installs nothing on a mismatch. After a game patch the SDK subset has to be regenerated and the
+  DLL rebuilt (see [Building](#building)).
 - Engine addresses are not hard-coded: they come from an SDK generated from the installed executable
   (`sdk/stellaris_sdk.hpp`, a subset written by `tools/extract_sdk.py`).
 - Mods are fine: the plugin changes how the engine computes, not what scripts or data say.
@@ -25,21 +27,36 @@ stress-test tooling used to find and check these optimizations.
 ## Install and use
 
 1. Download `stellaris-perf-<version>.zip` from the [Releases page](https://github.com/Yidhar/stellaris-perf/releases)
-   and unpack it anywhere. The `.sha256` file next to it holds the checksum.
-2. Start Stellaris (a save may or may not be loaded) and run
-   `python scripts\perfctl.py load`
-   (Python 3.8+, no packages). To inject automatically at launch, run `python scripts\perfctl.py load --wait`
-   first and then start the game.
-3. Settings live in `stellaris_perf.ini` next to `stellaris.exe`. The file is created with defaults on first run and
-   re-read every 2 seconds, so settings can be changed while the game runs.
-4. `python scripts\perfctl.py unload` removes the hooks and unloads the DLL; `status` shows whether it is loaded.
+   (the `.sha256` file next to it holds the checksum).
+2. Put it where the launcher keeps plugins: unpack the zip into
+   `Documents\Paradox Interactive\Stellaris\plugins\stellaris-perf\`
+   (the zip has no top folder: `stl-plugin.json` ends up directly in that folder). Or unpack it anywhere and install that
+   folder with the launcher: `stl plugin install <folder>`, or **Plugins > Install** in the launcher.
+3. Enable the plugin in your playset (`stl plugin enable stellaris-perf`, or the Plugins page).
+4. **Start the game with the Stellaris launcher** (`stl launch`, or its Play button). The launcher waits for the game's
+   window and loads the plugin. Starting the game from Steam or the Paradox launcher starts it **without** plugins; that
+   is how plugins work, there is no stand-in DLL or any other loader.
 
-The injection lasts for that game session only. The plugin writes just two files, both next to `stellaris.exe`:
-`stellaris_perf.ini` and `stellaris_perf.log` (hooks installed, settings, counters every 30 seconds).
+Updates: the manifest names this repository (`update.github`), so the launcher's Plugins page (or `stl plugin update
+stellaris-perf`) offers a newer release, checks its SHA-256 and installs it over the old one, keeping `config\`. The game
+has to be closed for that, because its DLL is in use.
+
+The plugin folder is the plugin's only place:
+
+| | |
+|---|---|
+| `config\stellaris_perf.ini` | the settings; the launcher makes it from `defaults\stellaris_perf.ini` and its Plugins page edits it. The plugin checks the file's modification time every 2 seconds and re-reads it when it changed, so settings can be changed while the game runs. A missing file means the built-in defaults. |
+| `logs\stellaris_perf.log` | hooks installed, the settings in effect, counters every 30 seconds and on every change |
+| `logs\stellaris_perf_rules.csv` | only with `rule_profile=1` |
+
+Nothing is written into the game folder. An old `stellaris_perf.ini` next to `stellaris.exe` (from before the plugin
+had its own folder) is copied into `config\` once if `config\` has no file when the plugin starts, and the game folder
+copy is ignored from then on. When the launcher already made `config\stellaris_perf.ini` from the defaults, copy your
+old settings over it by hand.
 
 ## What it optimizes
 
-Every optimization is a hook (or a 5-byte code patch) that is switched by one `stellaris_perf.ini` key. Hooks that
+Every optimization is a hook (or a 5-byte code patch) that is switched by one `config\stellaris_perf.ini` key. Hooks that
 are off pass straight through to the engine.
 
 ### On by default: the simulation result is unchanged
@@ -98,7 +115,7 @@ within that day, so they are not the engine's exact behaviour and are off by def
 - `profile` times every call of the hooked functions whose cache is off, split into the main thread and the other
   threads, per game day (written to the log).
 - `rule_profile` writes calls and cycles per game rule and per path (engine, bypass, hit, miss) to
-  `stellaris_perf_rules.csv` every ~30 s.
+  `logs\stellaris_perf_rules.csv` every ~30 s.
 - `scope_profile` times event-target resolution (`CEventTarget::GetScope`, dynamic `name@target` flags, scope copies).
 - The current settings and counters are also published in a read-only shared-memory block
   (`Local\stellaris_perf_stats_<pid>`, layout in `perf/include/perf_shared.hpp`) that the benchmark scripts read.
@@ -147,10 +164,10 @@ galaxy starts (`CGameState::OnNewGameStarted`), when a saved game starts (`CGame
 how a client joining a multiplayer game starts; the engine uses the same flag there to decide whether
 `on_single_player_save_game_load` fires), and once when the DLL is loaded, for a game that was already running. The check
 runs before the game's start scripts do. If the game is a multiplayer session, everything that runs inside or changes
-the simulation is forced off, whatever `stellaris_perf.ini` says: `opinion_cache`, `rule_cache`, `modifier_flush`,
+the simulation is forced off, whatever the settings file says: `opinion_cache`, `rule_cache`, `modifier_flush`,
 `flag_simd`, `flag_expiry_skip` and `fleet_parallel_grain1`. What stays is what only changes this client's display or
 measurements: the fleet manager window caches, `frame_smoothing` and the profilers. Starting a single-player game
-again makes the ini settings apply again. Each check and each change is written to `stellaris_perf.log`.
+again makes the settings from the file apply again. Each check and each change is written to `logs\stellaris_perf.log`.
 
 - `multiplayer_guard=1`: the behaviour above (default).
 - `multiplayer_guard=0`: never override. Every player must then use identical settings, or an out-of-sync error is
@@ -170,6 +187,16 @@ cmake -S . -B build -G "Visual Studio 17 2022" -A x64
 cmake --build build --config Release        # build\Release\stellaris_perf.dll, stellaris_bench.dll
 ```
 
+The build also assembles the plugin folder, `build\plugin\stellaris-perf` (manifest, DLL, `defaults\`). Install it with
+`stl plugin install build\plugin\stellaris-perf`, or work on it in place with `stl plugin install --link
+build\plugin\stellaris-perf` (then `config\` and `logs\` are created inside the build folder). `python
+tools\check_plugin.py [--dir build\plugin\stellaris-perf]` checks the manifest against the plugin spec and the SDK.
+
+For development, `stl inject build\plugin\stellaris-perf\stellaris_perf.dll` loads a build into the running game by
+hand (the DLL then reads `config\` and writes `logs\` in that build folder), and `python bench\scripts\dllctl.py
+unload perf` asks the DLL to unload itself (it removes its hooks, waits for calls in flight and frees itself), so a
+new build can be loaded without restarting the game. Players do not need either: the launcher loads the plugin.
+
 After a game patch, regenerate the SDK in the
 [Stellaris MCP repository](https://github.com/Yidhar/stellaris-mcp) (`python tools/sdk_dumper/dump.py`), then:
 
@@ -184,10 +211,12 @@ and rebuild. Which game build a release was made for is printed in its release n
 Releases: <https://github.com/Yidhar/stellaris-perf/releases>. The latest one is built by CI from its
 tag, with both zips and their SHA-256 files attached.
 
-`.github/workflows/build-release.yml` builds both DLLs on every push and pull request and keeps the packaged zips as
-workflow artifacts. Pushing a new tag that starts with `v` (for example `git tag v0.2.0 && git push origin v0.2.0`)
-makes the same workflow publish a GitHub Release with both zips, their SHA-256 files and release notes that state the
-game build the DLLs were made for. A tag with a `-` in it (such as `v0.2.0-rc1`) is published as a pre-release.
+`.github/workflows/build-release.yml` builds both DLLs on every push and pull request, checks the plugin folder with
+`tools/check_plugin.py` (manifest schema 2, the exe build matches the SDK, no stray files) and keeps the packaged zips
+as workflow artifacts. Pushing a tag `v<version>`, where the version is the one in `plugin/stl-plugin.json` (for
+example `git tag v0.2.0 && git push origin v0.2.0`; a different tag fails the check), makes the same workflow publish a
+GitHub Release with both zips, their SHA-256 files and release notes that state the game build the DLLs were made for.
+A tag with a `-` in it (such as `v0.2.0-rc1`) is published as a pre-release.
 
 ## Benchmarks and stress testing
 

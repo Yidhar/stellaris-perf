@@ -4,31 +4,76 @@
 
 Runs `xperf -a dumper` (Windows Performance Toolkit) to text, reads the column layout from the dump's
 own header lines, keeps the stellaris.exe samples, and groups them by counter (ProfileSource) and by
-function: stellaris.exe addresses map to their .pdata function (tools/sdk_dumper/win_extract.py),
-other modules count per module. Prints per function: samples per counter and the miss density
+function: stellaris.exe addresses map to their .pdata function (read from the exe in the Steam library, or from
+STELLARIS_DIR), other modules count per module. Prints per function: samples per counter and the miss density
 (cache-miss samples per cycle sample, scaled by the sampling intervals).
 """
+import bisect
 import collections
 import os
 import re
+import shutil
+import struct
 import subprocess
 import sys
 
-ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-XPERF = r"C:\Program Files (x86)\Windows Kits\10\Windows Performance Toolkit\xperf.exe"
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts"))
+from stellaris_paths import require_game_dir  # noqa: E402
+
+
+def find_xperf():
+    """XPERF if set, else xperf.exe on PATH, else the Windows Performance Toolkit of the Windows Kit."""
+    env = os.environ.get("XPERF")
+    if env:
+        return env
+    found = shutil.which("xperf")
+    if found:
+        return found
+    for var in ("ProgramFiles(x86)", "ProgramFiles"):
+        base = os.environ.get(var)
+        if base:
+            candidate = os.path.join(base, "Windows Kits", "10", "Windows Performance Toolkit", "xperf.exe")
+            if os.path.isfile(candidate):
+                return candidate
+    raise SystemExit("xperf.exe not found: install the Windows Performance Toolkit, or set XPERF to its path")
+
+
+class Pdata:
+    """The function starts of a PE32+ image, from its exception directory (.pdata): ip -> start of its function."""
+
+    def __init__(self, path):
+        with open(path, "rb") as f:
+            data = f.read()
+        pe = struct.unpack_from("<I", data, 0x3C)[0]
+        if data[pe:pe + 4] != b"PE\0\0":
+            raise SystemExit(f"{path} is not a PE file")
+        nsec, opt_size = struct.unpack_from("<H", data, pe + 6)[0], struct.unpack_from("<H", data, pe + 20)[0]
+        opt = pe + 24
+        if struct.unpack_from("<H", data, opt)[0] != 0x20B:
+            raise SystemExit(f"{path} is not a 64-bit image")
+        exc_rva, exc_size = struct.unpack_from("<II", data, opt + 112 + 3 * 8)
+        sections = []
+        for i in range(nsec):
+            o = opt + opt_size + i * 40
+            vsize, vaddr, rawsize, rawptr = struct.unpack_from("<IIII", data, o + 8)
+            sections.append((vaddr, max(vsize, rawsize), rawptr))
+        off = next(rawptr + (exc_rva - vaddr) for vaddr, size, rawptr in sections if vaddr <= exc_rva < vaddr + size)
+        self.begins = sorted(struct.unpack_from("<I", data, off + i)[0] for i in range(0, exc_size - 11, 12))
+
+    def fn_of(self, rva):
+        i = bisect.bisect_right(self.begins, rva) - 1
+        return self.begins[i] if i >= 0 else None
+
+
 INTERVAL = {"DcacheMisses": 65536, "CacheMisses": 65536, "TotalCycles": 1048576}
 
 etl = sys.argv[1]
 top = int(sys.argv[2]) if len(sys.argv) > 2 else 30
 dump = etl + ".txt"
 if not os.path.exists(dump):
-    subprocess.run([XPERF, "-i", etl, "-o", dump, "-a", "dumper"], check=True)
+    subprocess.run([find_xperf(), "-i", etl, "-o", dump, "-a", "dumper"], check=True)
 
-sys.path.insert(0, os.path.join(ROOT, "tools", "sdk_dumper"))
-_argv, sys.argv = sys.argv, ["x"]
-from win_extract import Image, EXE  # noqa: E402
-sys.argv = _argv
-im = Image(EXE)
+im = Pdata(os.path.join(require_game_dir(), "stellaris.exe"))
 
 headers, images, samples = {}, [], []
 for line in open(dump, encoding="utf-8", errors="replace"):

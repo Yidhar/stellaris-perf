@@ -20,7 +20,7 @@ import ctypes
 import ctypes.wintypes as w
 
 import dllctl
-from benchlib import GAME_DIR, Bench, PerfStats, game_pids
+from benchlib import Bench, PerfStats, game_pids, require_game_dir, stellaris_data_dir
 
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 VK = {"F9": 0x78, "z": 0x5A}
@@ -90,7 +90,7 @@ def open_fleet_manager(pid, tries=4):
             return True
     return False
 
-DOCS = os.path.join(os.path.expanduser("~"), "Documents", "Paradox Interactive", "Stellaris")
+DOCS = stellaris_data_dir()
 CONTINUE = os.path.join(DOCS, "continue_game.json")
 BACKUP = CONTINUE + ".perfbench_backup"
 
@@ -126,7 +126,8 @@ def point_continue_at(folder, name):
 def load(name, folder, timeout, fleet_manager=False):
     close_game()
     point_continue_at(folder, name)
-    subprocess.Popen([os.path.join(GAME_DIR, "stellaris.exe"), "-dx11", "--continuelastsave"], cwd=GAME_DIR,
+    game = require_game_dir()
+    subprocess.Popen([os.path.join(game, "stellaris.exe"), "-dx11", "--continuelastsave"], cwd=game,
                      creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP)
     deadline = time.time() + timeout
     while len(game_pids()) != 1:

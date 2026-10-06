@@ -1,10 +1,17 @@
-// stellaris_perf.dll entry: installs the perf hooks and follows stellaris_perf.ini (next to
-// stellaris.exe) for the settings, re-reading it every 2 seconds so tweaks can be switched while
-// the game runs. Statistics go to stellaris_perf.log every 30 seconds and on every change.
+// stellaris_perf.dll entry: a stellaris-launcher plugin (plugin spec v2, docs/PLUGINS.md of the launcher).
 //
-// Unloading: never FreeLibrary this DLL from outside while the game runs; a game thread may be inside
-// a detour. Signal the event Local\stellaris_perf_unload_<pid> instead (scripts/reload_perf_dll.py):
-// the worker removes the hooks, waits for in-flight calls to drain, then unloads the DLL itself.
+// The plugin lives in one folder, <Documents>\Paradox Interactive\Stellaris\plugins\stellaris-perf\, which the DLL finds
+// from its own module (not from the game or working folder):
+//   config\stellaris_perf.ini   the settings; re-read while the game runs, whenever the file's modification time changes
+//   logs\stellaris_perf.log     statistics every 30 seconds and on every change; logs\stellaris_perf_rules.csv (rule_profile)
+// A missing settings file means the built-in defaults. Nothing is written into the game folder. An old
+// stellaris_perf.ini next to stellaris.exe is copied into config\ once, when config\ has none yet, and ignored after that.
+//
+// DllMain only makes the unload event and starts the worker thread; everything else happens on the worker.
+//
+// Unloading: never FreeLibrary this DLL from outside while the game runs; a game thread may be inside a detour. Signal the
+// event Local\stellaris_perf_unload_<pid> instead (bench/scripts/dllctl.py unload perf): the worker removes the
+// hooks, waits for in-flight calls to drain and unloads the DLL itself.
 #include "perf_tweaks.hpp"
 
 #include <windows.h>
@@ -16,85 +23,135 @@ namespace {
 HMODULE g_module = nullptr;
 HANDLE g_unload_event = nullptr;
 
-std::string IniPath() {
-    char path[MAX_PATH];
-    GetModuleFileNameA(nullptr, path, MAX_PATH);
-    std::string s(path);
-    return s.substr(0, s.find_last_of("\\/") + 1) + "stellaris_perf.ini";
-}
-
-void WriteDefaultIni(const std::string& path) {
-    if (GetFileAttributesA(path.c_str()) != INVALID_FILE_ATTRIBUTES) return;
-    if (FILE* f = fopen(path.c_str(), "w")) {
-        fputs("; stellaris_perf.dll settings, re-read every 2 seconds while the game runs.\n"
-              "; Defaults: the measured, result-identical fixes are on; the rest is off.\n"
-              "[perf]\n"
-              "; -1 = leave the game's setting alone, 0 = off (faster ticks), 1 = on (smoother UI)\n"
-              "frame_smoothing=-1\n"
-              "; fleet parallel update: one fleet per work chunk, so a doomstack does not stall the other\n"
-              "; threads (same results)\n"
-              "fleet_parallel_grain1=1\n"
-              "; fleet manager window: cache fleet military power for up to 1 s (display only)\n"
-              "fleet_manager_cache=1\n"
-              "; fleet manager window: recalculate ships to reinforce at most every N ms (the game: 80 ms;\n"
-              "; display only)\n"
-              "fleet_manager_reinforce_ms=1000\n"
-              "; has_*_flag scan: 0 = the game's, 1 = SSE2 (same answer), 2 = verify (count mismatches)\n"
-              "flag_simd=0\n"
-              "; 1 = skip the daily flag expiry pass on containers without timed flags (same results)\n"
-              "flag_expiry_skip=0\n"
-              "; approximations (not the game's exact behaviour), off: 1 = cache per game day\n"
-              "opinion_cache=0\n"
-              "; 0 = off, 1 = every rule, 2 = adaptive (only rules measured to gain) - per game day\n"
-              "rule_cache=0\n"
-              "; experimental, off: modifier flush fast path (0/1; 2 = verify, 3 = control)\n"
-              "modifier_flush=0\n"
-              "; multiplayer is lock-step: 1 = in a multiplayer session force off everything that touches the\n"
-              "; simulation (the caches, the flag scans, the modifier fast path, the fleet chunking);\n"
-              "; 0 = never override; 2 = act as if in multiplayer (to test the guard)\n"
-              "multiplayer_guard=1\n", f);
-        fclose(f);
+// The folder this DLL was loaded from.
+std::wstring PluginDir() {
+    HMODULE self = nullptr;
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                            (LPCWSTR)&PluginDir, &self)) {
+        return L"";
     }
+    std::wstring path(32768, L'\0');
+    const DWORD n = GetModuleFileNameW(self, path.data(), (DWORD)path.size());
+    if (n == 0 || n >= path.size()) return L"";
+    path.resize(n);
+    return path.substr(0, path.find_last_of(L"\\/"));
 }
 
-perf::Settings ReadIni(const std::string& path) {
-    perf::Settings s;
-    s.frame_smoothing = GetPrivateProfileIntA("perf", "frame_smoothing", -1, path.c_str());
-    s.opinion_cache = GetPrivateProfileIntA("perf", "opinion_cache", 0, path.c_str()) != 0;
-    s.rule_cache = GetPrivateProfileIntA("perf", "rule_cache", 0, path.c_str());
-    s.fleet_manager_cache = GetPrivateProfileIntA("perf", "fleet_manager_cache", 1, path.c_str()) != 0;
-    s.fleet_manager_reinforce_ms = GetPrivateProfileIntA("perf", "fleet_manager_reinforce_ms", 1000, path.c_str());
-    s.flag_simd = GetPrivateProfileIntA("perf", "flag_simd", 0, path.c_str());
-    s.flag_expiry_skip = GetPrivateProfileIntA("perf", "flag_expiry_skip", 0, path.c_str()) != 0;
-    s.profile = GetPrivateProfileIntA("perf", "profile", 0, path.c_str()) != 0;
-    s.rule_profile = GetPrivateProfileIntA("perf", "rule_profile", 0, path.c_str()) != 0;
-    s.modifier_flush = GetPrivateProfileIntA("perf", "modifier_flush", 0, path.c_str());
-    s.fleet_parallel_grain1 = GetPrivateProfileIntA("perf", "fleet_parallel_grain1", 1, path.c_str()) != 0;
-    s.scope_profile = GetPrivateProfileIntA("perf", "scope_profile", 0, path.c_str()) != 0;
-    s.modifier_flush_max = GetPrivateProfileIntA("perf", "modifier_flush_max", 32, path.c_str());
-    s.multiplayer_guard = GetPrivateProfileIntA("perf", "multiplayer_guard", 1, path.c_str());
+std::string Utf8(const std::wstring& w) {
+    if (w.empty()) return {};
+    const int n = WideCharToMultiByte(CP_UTF8, 0, w.data(), (int)w.size(), nullptr, 0, nullptr, nullptr);
+    std::string s(n, '\0');
+    WideCharToMultiByte(CP_UTF8, 0, w.data(), (int)w.size(), s.data(), n, nullptr, nullptr);
     return s;
 }
 
+// The old place of the settings: next to stellaris.exe. Copied once when config\ has no file; never read afterwards.
+void MigrateGameFolderIni(const std::wstring& config_dir, const std::wstring& config_file) {
+    if (GetFileAttributesW(config_file.c_str()) != INVALID_FILE_ATTRIBUTES) return;
+    std::wstring exe(32768, L'\0');
+    const DWORD n = GetModuleFileNameW(nullptr, exe.data(), (DWORD)exe.size());
+    if (n == 0 || n >= exe.size()) return;
+    exe.resize(n);
+    const std::wstring old_ini = exe.substr(0, exe.find_last_of(L"\\/") + 1) + L"stellaris_perf.ini";
+    if (GetFileAttributesW(old_ini.c_str()) == INVALID_FILE_ATTRIBUTES) return;
+    CreateDirectoryW(config_dir.c_str(), nullptr);
+    if (CopyFileW(old_ini.c_str(), config_file.c_str(), TRUE)) {
+        perf::Log("settings: copied %s from the game folder to %s (the game folder copy is ignored from now on)",
+                  Utf8(old_ini).c_str(), Utf8(config_file).c_str());
+    } else {
+        perf::Log("settings: could not copy %s (error %lu)", Utf8(old_ini).c_str(), GetLastError());
+    }
+}
+
+// What identifies one version of the settings file.
+struct FileStamp {
+    bool exists = false;
+    FILETIME written{};
+    DWORD size = 0;
+    bool operator==(const FileStamp& o) const {
+        return exists == o.exists && written.dwLowDateTime == o.written.dwLowDateTime &&
+               written.dwHighDateTime == o.written.dwHighDateTime && size == o.size;
+    }
+};
+
+FileStamp StampOf(const std::wstring& path) {
+    FileStamp s;
+    WIN32_FILE_ATTRIBUTE_DATA d;
+    if (GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &d)) {
+        s.exists = true;
+        s.written = d.ftLastWriteTime;
+        s.size = d.nFileSizeLow;
+    }
+    return s;
+}
+
+// Every key has its built-in default here, so a missing file or a missing key just means the default.
+perf::Settings ReadIni(const std::wstring& path) {
+    perf::Settings s;
+    const wchar_t* p = path.c_str();
+    s.frame_smoothing = GetPrivateProfileIntW(L"perf", L"frame_smoothing", -1, p);
+    s.opinion_cache = GetPrivateProfileIntW(L"perf", L"opinion_cache", 0, p) != 0;
+    s.rule_cache = GetPrivateProfileIntW(L"perf", L"rule_cache", 0, p);
+    s.fleet_manager_cache = GetPrivateProfileIntW(L"perf", L"fleet_manager_cache", 1, p) != 0;
+    s.fleet_manager_reinforce_ms = GetPrivateProfileIntW(L"perf", L"fleet_manager_reinforce_ms", 1000, p);
+    s.flag_simd = GetPrivateProfileIntW(L"perf", L"flag_simd", 0, p);
+    s.flag_expiry_skip = GetPrivateProfileIntW(L"perf", L"flag_expiry_skip", 0, p) != 0;
+    s.profile = GetPrivateProfileIntW(L"perf", L"profile", 0, p) != 0;
+    s.rule_profile = GetPrivateProfileIntW(L"perf", L"rule_profile", 0, p) != 0;
+    s.modifier_flush = GetPrivateProfileIntW(L"perf", L"modifier_flush", 0, p);
+    s.fleet_parallel_grain1 = GetPrivateProfileIntW(L"perf", L"fleet_parallel_grain1", 1, p) != 0;
+    s.scope_profile = GetPrivateProfileIntW(L"perf", L"scope_profile", 0, p) != 0;
+    s.modifier_flush_max = GetPrivateProfileIntW(L"perf", L"modifier_flush_max", 32, p);
+    s.multiplayer_guard = GetPrivateProfileIntW(L"perf", L"multiplayer_guard", 1, p);
+    return s;
+}
+
+[[noreturn]] void Unload() {
+    perf::Uninstall();
+    perf::Log("stellaris_perf.dll unloading");
+    CloseHandle(g_unload_event);
+    FreeLibraryAndExitThread(g_module, 0);
+}
+
 DWORD WINAPI Worker(LPVOID) {
+    const std::wstring dir = PluginDir();
+    perf::SetLogDirectory(dir.empty() ? L"" : dir + L"\\logs");
     const uintptr_t base = (uintptr_t)GetModuleHandleA(nullptr);
-    perf::Log("stellaris_perf.dll loaded, image base 0x%llX", (unsigned long long)base);
+    perf::Log("stellaris_perf.dll loaded, image base 0x%llX, plugin folder %s", (unsigned long long)base,
+              dir.empty() ? "(unknown: no log file, built-in defaults)" : Utf8(dir).c_str());
     if (!perf::Install(base)) {
         perf::Log("hooks not installed; the DLL stays idle");
         WaitForSingleObject(g_unload_event, INFINITE);
-        perf::Uninstall();
-        perf::Log("stellaris_perf.dll unloading");
-        CloseHandle(g_unload_event);
-        FreeLibraryAndExitThread(g_module, 0);
+        Unload();
     }
-    const std::string ini = IniPath();
-    WriteDefaultIni(ini);
+    const std::wstring config_dir = dir.empty() ? L"" : dir + L"\\config";
+    const std::wstring config_file = dir.empty() ? L"" : config_dir + L"\\stellaris_perf.ini";
+    if (!dir.empty()) MigrateGameFolderIni(config_dir, config_file);
+
     // A game that is already running when the DLL is loaded started before the hooks existed: read its
     // multiplayer flag now. Later games are checked by the hooks, when they start.
     perf::CheckMultiplayer("DLL loaded");
+
+    perf::Settings settings;  // the built-in defaults until a file is read
+    FileStamp stamp;
+    bool first = true;
     int ticks = 0;
     for (;;) {
-        const bool changed = perf::SetUserSettings(ReadIni(ini));
+        // The settings are read when the file changed (also: appeared, or went away), checked every 2 s.
+        const FileStamp now = config_file.empty() ? FileStamp{} : StampOf(config_file);
+        if (first || !(now == stamp)) {
+            if (now.exists) {
+                settings = ReadIni(config_file);
+                perf::Log("settings file %s read", Utf8(config_file).c_str());
+            } else {
+                settings = perf::Settings{};
+                perf::Log("no settings file%s%s: the built-in defaults apply", config_file.empty() ? "" : " at ",
+                          Utf8(config_file).c_str());
+            }
+            stamp = now;
+            first = false;
+        }
+        const bool changed = perf::SetUserSettings(settings);
         perf::Publish();
         if (changed || ++ticks % 15 == 0) {
             perf::Log("%s", perf::StatsLine().c_str());
@@ -102,10 +159,7 @@ DWORD WINAPI Worker(LPVOID) {
         if (WaitForSingleObject(g_unload_event, 2000) == WAIT_OBJECT_0) break;
     }
     perf::Log("unload requested: %s", perf::StatsLine().c_str());
-    perf::Uninstall();
-    perf::Log("stellaris_perf.dll unloading");
-    CloseHandle(g_unload_event);
-    FreeLibraryAndExitThread(g_module, 0);
+    Unload();
 }
 
 } // namespace

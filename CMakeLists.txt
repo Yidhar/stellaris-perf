@@ -37,3 +37,14 @@ foreach(target stellaris_perf stellaris_bench)
     endif()
     set_target_properties(${target} PROPERTIES OUTPUT_NAME ${target} PREFIX "")
 endforeach()
+
+# The plugin folder as the launcher expects it (docs/PLUGINS.md of the launcher): stl-plugin.json, the DLL, defaults\.
+# Build\plugin\stellaris-perf can be installed or linked with `stl plugin install [--link] build\plugin\stellaris-perf`.
+set(PERF_PLUGIN_DIR "${CMAKE_BINARY_DIR}/plugin/stellaris-perf")
+add_custom_target(stellaris_perf_plugin ALL
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${PERF_PLUGIN_DIR}/defaults"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:stellaris_perf>" "${PERF_PLUGIN_DIR}/"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/plugin/stl-plugin.json" "${PERF_PLUGIN_DIR}/"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/plugin/defaults/stellaris_perf.ini" "${PERF_PLUGIN_DIR}/defaults/"
+    DEPENDS stellaris_perf
+    COMMENT "Assembling ${PERF_PLUGIN_DIR}")

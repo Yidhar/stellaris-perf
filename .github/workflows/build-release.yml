@@ -1,8 +1,9 @@
 name: Build and release
 
-# Every push to main and every pull request builds stellaris_perf.dll and stellaris_bench.dll and keeps the
-# two packaged zips as workflow artifacts. Pushing a tag v* (for example v0.1.0) also publishes a GitHub
-# Release with both zips and their SHA-256 files.
+# Every push to main and every pull request builds stellaris_perf.dll and stellaris_bench.dll, checks the plugin
+# folder against the launcher's plugin spec, and keeps the two packaged zips as workflow artifacts. Pushing a tag
+# v<version> (the version of plugin/stl-plugin.json, for example v0.2.0) also publishes a GitHub Release with both
+# zips and their SHA-256 files.
 on:
   push:
     branches: [main]
@@ -23,14 +24,22 @@ jobs:
         with:
           python-version: "3.12"
 
-      # the scripts ship in the zips, so a syntax error must fail the build
+      # the bench scripts ship in the bench zip, so a syntax error must fail the build
       - name: Check the Python scripts
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $files = Get-ChildItem -Recurse -Filter *.py scripts, bench, tools | ForEach-Object FullName
+          $files = Get-ChildItem -Recurse -Filter *.py bench, tools | ForEach-Object FullName
           python -m py_compile @files
           if ($LASTEXITCODE -ne 0) { throw "py_compile failed" }
+
+      # manifest schema 2, the exe build matches the SDK, the tag matches the version
+      - name: Check the plugin manifest
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ($env:GITHUB_REF_TYPE -eq "tag") { python tools/check_plugin.py --tag $env:GITHUB_REF_NAME } else { python tools/check_plugin.py }
+          if ($LASTEXITCODE -ne 0) { throw "check_plugin failed" }
 
       # ---- DLLs (MSVC x64; MinHook comes from FetchContent)
       - name: Configure
@@ -49,33 +58,38 @@ jobs:
           # the DLLs only work with the stellaris.exe build the SDK was generated from
           $ts = (Select-String -Path sdk/stellaris_sdk.hpp -Pattern "kExeTimestamp = (0x[0-9A-Fa-f]+)").Matches[0].Groups[1].Value
           $built = [DateTimeOffset]::FromUnixTimeSeconds([Convert]::ToInt64($ts, 16)).UtcDateTime.ToString("yyyy-MM-dd HH:mm 'UTC'")
-          $note = @(
-            "Built for the stellaris.exe whose PE timestamp is $ts ($built), Stellaris 4.5.1 (Windows x64).",
-            "With any other build the DLL logs the mismatch and installs nothing."
-          )
 
-          # --- stellaris-perf: the plugin
+          # --- stellaris-perf: the plugin. The zip IS the plugin folder: unpack it into
+          #     Documents\Paradox Interactive\Stellaris\plugins\stellaris-perf\, or install the unpacked folder with the launcher.
           $perf = "stellaris-perf-$ver"
-          $out = Join-Path "package" $perf
-          New-Item -ItemType Directory -Force -Path "$out/scripts" | Out-Null
-          Copy-Item build/Release/stellaris_perf.dll $out/
-          Copy-Item scripts/perfctl.py "$out/scripts/"
-          Copy-Item README.md, README.zh-CN.md, LICENSE $out/
-          $note | Set-Content -Encoding utf8 "$out/GAME_BUILD.txt"
-          Compress-Archive -Path $out -DestinationPath "package/$perf.zip"
+          $dir = "package/stellaris-perf"
+          New-Item -ItemType Directory -Force -Path "$dir/defaults" | Out-Null
+          Copy-Item build/Release/stellaris_perf.dll $dir/
+          Copy-Item plugin/stl-plugin.json $dir/
+          Copy-Item plugin/defaults/stellaris_perf.ini "$dir/defaults/"
+          Copy-Item README.md, README.zh-CN.md, LICENSE $dir/
+          # the zip is the plugin folder: no config\ or logs\ (the user's), a manifest the launcher can update from
+          if ($env:GITHUB_REF_TYPE -eq "tag") { python tools/check_plugin.py --dir $dir --release --tag $env:GITHUB_REF_NAME } else { python tools/check_plugin.py --dir $dir --release }
+          if ($LASTEXITCODE -ne 0) { throw "the plugin folder does not pass check_plugin" }
+          Compress-Archive -Path "$dir/*" -DestinationPath "package/$perf.zip"
 
-          # --- stellaris-perf-bench: benchmark DLL, scripts and the stress-mod generator
+          # --- stellaris-perf-bench: benchmark DLL, scripts and the stress-mod generator (not a plugin)
           $bench = "stellaris-perf-bench-$ver"
           $out = Join-Path "package" $bench
           New-Item -ItemType Directory -Force -Path "$out/bench" | Out-Null
-          Copy-Item build/Release/stellaris_bench.dll, build/Release/stellaris_perf.dll $out/
+          Copy-Item build/Release/stellaris_bench.dll $out/
           foreach ($d in "scripts", "stress_mod", "tools") { Copy-Item -Recurse "bench/$d" "$out/bench/$d" }
           Copy-Item bench/README.md, bench/README.zh-CN.md $out/
           Copy-Item LICENSE $out/
-          $note | Set-Content -Encoding utf8 "$out/GAME_BUILD.txt"
+          @(
+            "Built for the stellaris.exe whose PE timestamp is $ts ($built), Stellaris 4.5.2 (Windows x64).",
+            "With any other build the DLLs log the mismatch and install nothing.",
+            "The benchmark scripts expect the stellaris-perf plugin to be installed (see STELLARIS_PERF_DIR in README.md)."
+          ) | Set-Content -Encoding utf8 "$out/GAME_BUILD.txt"
           Get-ChildItem -Recurse -Directory -Filter __pycache__ $out | Remove-Item -Recurse -Force
           Compress-Archive -Path $out -DestinationPath "package/$bench.zip"
 
+          # <zip>.sha256: the hex digest first, then the file name (the launcher checks the download against it)
           foreach ($n in $perf, $bench) {
             $hash = (Get-FileHash "package/$n.zip" -Algorithm SHA256).Hash.ToLower()
             "$hash  $n.zip" | Set-Content -Encoding ascii "package/$n.zip.sha256"
@@ -99,8 +113,8 @@ jobs:
           generate_release_notes: true
           prerelease: ${{ contains(github.ref_name, '-') }}
           body: |
-            Built for **Stellaris 4.5.1** (Windows x64), `stellaris.exe` PE timestamp `${{ steps.package.outputs.exe_timestamp }}` (${{ steps.package.outputs.exe_built }}).
-            The DLLs only work with that exact game build.
+            Built for **Stellaris 4.5.2** (Windows x64), `stellaris.exe` PE timestamp `${{ steps.package.outputs.exe_timestamp }}` (${{ steps.package.outputs.exe_built }}).
+            The DLL only works with that exact game build; the launcher checks this from the manifest.
 
-            - `stellaris-perf-*.zip`: the plugin (`stellaris_perf.dll`, `scripts/perfctl.py`). Start here.
+            - `stellaris-perf-*.zip`: the plugin, laid out as its plugin folder (`stl-plugin.json`, `stellaris_perf.dll`, `defaults\`). Unpack it into `Documents\Paradox Interactive\Stellaris\plugins\stellaris-perf\`, or unpack it anywhere and install the folder with the Stellaris launcher. Start the game with the launcher (`stl launch` or its Play button): that is what loads the plugin.
             - `stellaris-perf-bench-*.zip`: benchmark and stress-test tooling, only needed to measure or test.

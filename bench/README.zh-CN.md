@@ -13,16 +13,19 @@
 | `scripts/dllctl.py` | 加载或卸载两个 DLL。加载是远程 `LoadLibraryW`；卸载通过设置 DLL 自己的事件，由 DLL 摘掉钩子、等进行中的调用都结束后自行卸载，从不在外部调用 `FreeLibrary`。 |
 | `scripts/bench_fm.py` | 在一次连续运行里做 A/B，不需要读档。 |
 | `scripts/game_session.py` | 自动读档：用指定存档重启游戏，加载 DLL，暂停，打开舰队管理器。 |
-| `scripts/rule_report.py` | 从游戏内存里为 `stellaris_perf_rules.csv`（`rule_profile=1`）里的规则命名。 |
+| `scripts/stellaris_paths.py` | 找到游戏目录（Steam 库）和 Documents 目录，其他脚本都用它。 |
+| `scripts/rule_report.py` | 从游戏内存里为 `logs\stellaris_perf_rules.csv`（`rule_profile=1`）里的规则命名。 |
 | `stress_mod/gen_stress_mod.py` | 生成压力测试 mod（见下）。 |
 | `tools/` | 硬件计数器（缓存未命中）采样用的 WPR 配置和报告脚本。 |
 | `results/` | 每次运行的 JSON 结果（首次运行时创建，不入库）。 |
+
+**插件的文件在哪里。** `stellaris_perf.dll` 在它被加载的那个文件夹里读取 `config\stellaris_perf.ini`、写入 `logs\`。脚本使用环境变量 `STELLARIS_PERF_DIR`（如果设置了），否则用源码检出里构建组装出的 `build\plugin\stellaris-perf`，再否则用已安装的插件 `Documents\Paradox Interactive\Stellaris\plugins\stellaris-perf`。`bench_fm.py` 把要测试的设置写进那里的 `config\stellaris_perf.ini`，`rule_report.py` 读那里的 `logs\stellaris_perf_rules.csv`。（`stellaris_bench.dll` 不是插件，它的小日志写在游戏 exe 旁边。）
 
 为什么不用 inline hook：另一个工具可能已经用 inline hook 挂了 `Present`。两个 inline hook 叠在同一个函数上，如果按错误的顺序卸载，一方会把一条指向已卸载 DLL 的跳转写回去，游戏就会崩溃。改虚表槽位和 inline hook 互不干扰。
 
 ## 用法
 
-先编译两个 DLL（见主 README），然后在游戏运行并已读档时：
+先编译两个 DLL（见主 README），然后在游戏运行并已读档时（脚本自己会加载 DLL；用启动器启动并启用了插件的游戏里已经有 `stellaris_perf.dll`，`dllctl.py` 会识别出来）：
 
 ```powershell
 python bench\scripts\dllctl.py load all      # 在游戏中加载 perf 和 bench
@@ -32,7 +35,7 @@ python bench\scripts\dllctl.py unload all
 
 `bench_fm.py` 的流程：
 
-- 修改 `stellaris_perf.ini`，等统计里出现新设置；
+- 修改插件文件夹里的 `config\stellaris_perf.ini`，等统计里出现新设置；
 - 先让 `settle` 天过去，再计时 `days` 天；
 - 按 ABBA 顺序排段，游戏逐渐变慢这类稳定漂移会在配对差里抵消；
 - 事件弹窗暂停游戏时自动取消暂停，天与天之间超过 2 秒的间隔不计入；
@@ -76,7 +79,7 @@ python bench\stress_mod\gen_stress_mod.py --disable             # 再移除
 python bench\stress_mod\gen_stress_mod.py --help                # 所有规模参数
 ```
 
-用完记得运行 `--disable`：启用这个 mod 时游戏比正常慢得多。游戏不在默认的 Steam 目录时，设置环境变量 `STELLARIS_DIR`。
+用完记得运行 `--disable`：启用这个 mod 时游戏比正常慢得多。不假设这台机器的任何路径：游戏目录从 Steam 库里找（注册表和 `libraryfolders.vdf`），`Documents` 取自系统（`scripts/stellaris_paths.py`）。游戏在别处时设置 `STELLARIS_DIR`，要用别的插件文件夹设置 `STELLARIS_PERF_DIR`，`xperf.exe` 不在 `PATH` 也不在 Windows Kit 里时给 `tools/pmc_report.py` 设置 `XPERF`。
 
 
 ## 已知限制

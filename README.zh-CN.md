@@ -2,32 +2,43 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-**Stellaris 4.5.1**（Windows x64，`-dx11` 版本）的性能插件：一个注入到 `stellaris.exe` 的小 DLL，把引擎里几处较慢的代码路径换成等价但更省的实现。不需要 mod，不修改存档，不依赖任何其他工具。仓库里同时放着用来发现和验证这些优化的基准测试与压力测试工具。
+**Stellaris 4.5.2**（Windows x64，`-dx11` 版本）的性能插件：一个注入到 `stellaris.exe` 的小 DLL，把引擎里几处较慢的代码路径换成等价但更省的实现。不需要 mod，不修改存档。它是 **Stellaris 启动器**的一个插件（插件规范 v2）：启动器负责安装它、提供设置文件的编辑、检查它是否适用于已安装的游戏版本，并在启动游戏时加载它。仓库里同时放着用来发现和验证这些优化的基准测试与压力测试工具。
 
 | 发布文件 | 内容 |
 |---|---|
-| `stellaris-perf-<版本>.zip` | `stellaris_perf.dll`、`scripts/perfctl.py`（加载 / 卸载）、本说明 |
-| `stellaris-perf-bench-<版本>.zip` | `stellaris_bench.dll`、基准测试脚本和压力 mod 生成器（见 [`bench/`](bench/README.zh-CN.md)） |
+| `stellaris-perf-<版本>.zip` | **插件文件夹本身**：`stl-plugin.json`、`stellaris_perf.dll`、`defaults\stellaris_perf.ini`、本说明 |
+| `stellaris-perf-bench-<版本>.zip` | `stellaris_bench.dll`、基准测试脚本和压力 mod 生成器（见 [`bench/`](bench/README.zh-CN.md)）；不是插件 |
 
 ## 兼容性
 
-- 只适用于**一个确定的游戏版本**：发布说明里写着对应 `stellaris.exe` 的 PE 时间戳，加载时会和 SDK 比对。版本不一致时 DLL 只写一条日志，不安装任何钩子。游戏更新之后需要重新生成 SDK 子集并重新编译（见[编译](#编译)）。
+- 只适用于**一个确定的游戏版本**：对应 `stellaris.exe` 的 PE 时间戳写在清单里（`game.exe_timestamps`）和发布说明里。启动器不会把插件加载进其他版本；DLL 还会再和 SDK 比对一次，不一致时什么都不安装。游戏更新之后需要重新生成 SDK 子集并重新编译（见[编译](#编译)）。
 - 引擎地址没有写死：全部来自从已安装的可执行文件生成的 SDK（`sdk/stellaris_sdk.hpp`，由 `tools/extract_sdk.py` 写出的子集）。
 - 和 mod 兼容：插件改变的是引擎怎么计算，不是脚本和数据写了什么。
 - 测试过的是单人游戏。联机见[多人游戏](#多人游戏)。
 
 ## 安装和使用
 
-1. 在 [Releases 页面](https://github.com/Yidhar/stellaris-perf/releases)下载 `stellaris-perf-<版本>.zip`，解压到任意位置。旁边的 `.sha256` 文件是校验和。
-2. 启动 Stellaris（是否已读档都可以），运行 `python scripts\perfctl.py load`（Python 3.8+，不需要额外的包）。想在启动游戏时自动注入，先运行 `python scripts\perfctl.py load --wait`，再启动游戏。
-3. 设置放在 `stellaris.exe` 旁边的 `stellaris_perf.ini`。首次运行会按默认值生成，之后每 2 秒重新读取一次，所以游戏运行中就能改设置。
-4. `python scripts\perfctl.py unload` 摘掉钩子并卸载 DLL；`status` 显示是否已加载。
+1. 在 [Releases 页面](https://github.com/Yidhar/stellaris-perf/releases)下载 `stellaris-perf-<版本>.zip`（旁边的 `.sha256` 文件是校验和）。
+2. 把它放到启动器存放插件的地方：把 zip 解压到 `Documents\Paradox Interactive\Stellaris\plugins\stellaris-perf\`（zip 里没有最外层文件夹，`stl-plugin.json` 会直接落在这个文件夹里）。
+   也可以解压到任意位置，再用启动器安装这个文件夹：`stl plugin install <文件夹>`，或者启动器里的**插件 > 安装**。
+3. 在你的 playset 里启用插件（`stl plugin enable stellaris-perf`，或者插件页面）。
+4. **用 Stellaris 启动器启动游戏**（`stl launch`，或它的开始游戏按钮）。启动器会等游戏窗口出现，再加载插件。从 Steam 或 Paradox 启动器启动游戏时**不会**加载插件；这是插件的工作方式，没有替身 DLL，也没有别的加载器。
 
-注入只在这一次游戏运行中有效。插件只写两个文件，都在 `stellaris.exe` 旁边：`stellaris_perf.ini` 和 `stellaris_perf.log`（已安装的钩子、设置，以及每 30 秒一次的计数）。
+更新：清单里写了本仓库（`update.github`），所以启动器的插件页面（或 `stl plugin update stellaris-perf`）会提示有新版本，校验 SHA-256 后覆盖安装，并保留 `config\`。更新时游戏必须是关闭的，因为 DLL 正在使用。
+
+插件文件夹是插件唯一的存放位置：
+
+| | |
+|---|---|
+| `config\stellaris_perf.ini` | 设置。启动器根据 `defaults\stellaris_perf.ini` 生成它，插件页面可以直接编辑。插件每 2 秒检查一次文件的修改时间，变了就重新读取，所以游戏运行中就能改设置。文件缺失时使用内置默认值。 |
+| `logs\stellaris_perf.log` | 已安装的钩子、生效的设置，以及每 30 秒一次和每次变化时的计数 |
+| `logs\stellaris_perf_rules.csv` | 仅在 `rule_profile=1` 时 |
+
+不会往游戏文件夹里写任何东西。游戏文件夹里如果有旧的 `stellaris_perf.ini`（插件有自己的文件夹之前的设置位置），而插件启动时 `config\` 里还没有文件，就会把它复制到 `config\` 一次，之后忽略游戏文件夹里的那份。启动器已经根据默认值生成了 `config\stellaris_perf.ini` 时，需要手动把旧设置复制过去。
 
 ## 做了哪些优化
 
-每项优化都是一个钩子（或一处 5 字节的代码补丁），由 `stellaris_perf.ini` 里的一个键控制。关闭的钩子直接透传给引擎。
+每项优化都是一个钩子（或一处 5 字节的代码补丁），由 `config\stellaris_perf.ini` 里的一个键控制。关闭的钩子直接透传给引擎。
 
 ### 默认开启：模拟结果不变
 
@@ -58,7 +69,7 @@
 ### 诊断
 
 - `profile` 对已挂钩且缓存关闭的函数，按主线程和其他线程分开，统计每个游戏日里每次调用的耗时（写入日志）。
-- `rule_profile` 每 30 秒左右把每条游戏规则、每条路径（引擎、绕过、命中、未命中）的调用数和周期数写入 `stellaris_perf_rules.csv`。
+- `rule_profile` 每 30 秒左右把每条游戏规则、每条路径（引擎、绕过、命中、未命中）的调用数和周期数写入 `logs\stellaris_perf_rules.csv`。
 - `scope_profile` 统计事件目标解析（`CEventTarget::GetScope`、动态的 `name@target` flag、作用域拷贝）的耗时。
 - 当前设置和计数还会发布到一块只读的共享内存（`Local\stellaris_perf_stats_<pid>`，结构见 `perf/include/perf_shared.hpp`），基准脚本从这里读取。
 
@@ -94,7 +105,7 @@
 
 Stellaris 的多人游戏是锁步的：每个客户端模拟同一局游戏，并比对校验和，所以任何只在一个客户端上改变结果的东西，最终都会导致不同步。
 
-因此插件带有**多人保护**（`multiplayer_guard`，默认开启）。它**只在每次游戏开始时**读取一次游戏自己的多人标志（引擎的 `is_multiplayer` 触发器检查的那个字节）：新星系开始时（`CGameState::OnNewGameStarted`）、存档开始时（`CGameState::OnSavedGameStarted`，加入多人游戏的客户端也走这条路径；引擎在那里用同一个标志决定是否触发 `on_single_player_save_game_load`），以及 DLL 加载时（针对加载之前就已经在运行的游戏）各检查一次。检查发生在游戏的开局脚本运行之前。如果这局游戏是多人会话，所有运行在模拟内部或会改变模拟的设置，不管 `stellaris_perf.ini` 里怎么写，都会被强制关闭：`opinion_cache`、`rule_cache`、`modifier_flush`、`flag_simd`、`flag_expiry_skip` 和 `fleet_parallel_grain1`。保留的只有仅影响这个客户端显示或测量的部分：舰队管理器窗口的缓存、`frame_smoothing` 和各个分析开关。再开始一局单人游戏时，ini 里的设置重新生效。每次检查和每次变化都会写进 `stellaris_perf.log`。
+因此插件带有**多人保护**（`multiplayer_guard`，默认开启）。它**只在每次游戏开始时**读取一次游戏自己的多人标志（引擎的 `is_multiplayer` 触发器检查的那个字节）：新星系开始时（`CGameState::OnNewGameStarted`）、存档开始时（`CGameState::OnSavedGameStarted`，加入多人游戏的客户端也走这条路径；引擎在那里用同一个标志决定是否触发 `on_single_player_save_game_load`），以及 DLL 加载时（针对加载之前就已经在运行的游戏）各检查一次。检查发生在游戏的开局脚本运行之前。如果这局游戏是多人会话，所有运行在模拟内部或会改变模拟的设置，不管设置文件里怎么写，都会被强制关闭：`opinion_cache`、`rule_cache`、`modifier_flush`、`flag_simd`、`flag_expiry_skip` 和 `fleet_parallel_grain1`。保留的只有仅影响这个客户端显示或测量的部分：舰队管理器窗口的缓存、`frame_smoothing` 和各个分析开关。再开始一局单人游戏时，设置文件里的设置重新生效。每次检查和每次变化都会写进 `logs\stellaris_perf.log`。
 
 - `multiplayer_guard=1`：上述行为（默认）。
 - `multiplayer_guard=0`：从不覆盖。这时所有玩家必须使用完全相同的设置，否则很可能出现不同步；在多人会话中处于这种状态时，日志会给出警告。
@@ -111,6 +122,10 @@ cmake -S . -B build -G "Visual Studio 17 2022" -A x64
 cmake --build build --config Release        # build\Release\stellaris_perf.dll、stellaris_bench.dll
 ```
 
+构建还会组装出插件文件夹 `build\plugin\stellaris-perf`（清单、DLL、`defaults\`）。用 `stl plugin install build\plugin\stellaris-perf` 安装它，或者用 `stl plugin install --link build\plugin\stellaris-perf` 原地开发（这时 `config\` 和 `logs\` 会建在构建文件夹里）。`python tools\check_plugin.py [--dir build\plugin\stellaris-perf]` 会对照插件规范和 SDK 检查清单。
+
+开发时，`stl inject build\plugin\stellaris-perf\stellaris_perf.dll` 可以把一个构建手动加载进正在运行的游戏（这时 DLL 在那个构建文件夹里读取 `config\`、写入 `logs\`），`python bench\scripts\dllctl.py unload perf` 让 DLL 自己卸载（摘掉钩子、等进行中的调用结束、再释放自己），这样不用重启游戏就能换新构建。玩家两者都不需要：插件由启动器加载。
+
 游戏更新之后，先在 [Stellaris MCP 仓库](https://github.com/Yidhar/stellaris-mcp)里重新生成 SDK（`python tools/sdk_dumper/dump.py`），然后：
 
 ```powershell
@@ -123,7 +138,7 @@ python tools\extract_sdk.py <完整的 stellaris_sdk.hpp 路径>   # 重写 sdk\
 
 发布页：<https://github.com/Yidhar/stellaris-perf/releases>。最新版本由 CI 根据标签编译并发布，附带两个 zip 和对应的 SHA-256 文件。
 
-`.github/workflows/build-release.yml` 在每次 push 和 pull request 时编译两个 DLL，并把打包好的 zip 作为工作流产物保存。推送一个以 `v` 开头的新标签（例如 `git tag v0.2.0 && git push origin v0.2.0`），同一个工作流就会发布 GitHub Release，附带两个 zip、SHA-256 文件，以及写明 DLL 对应游戏版本的发布说明。标签里带 `-` 的（例如 `v0.2.0-rc1`）会作为预发布版本。
+`.github/workflows/build-release.yml` 在每次 push 和 pull request 时编译两个 DLL，用 `tools/check_plugin.py` 检查插件文件夹（清单是 schema 2、游戏版本和 SDK 一致、没有多余文件），并把打包好的 zip 作为工作流产物保存。推送标签 `v<版本>`（版本就是 `plugin/stl-plugin.json` 里的版本，例如 `git tag v0.2.0 && git push origin v0.2.0`；标签对不上会让检查失败），同一个工作流就会发布 GitHub Release，附带两个 zip、SHA-256 文件，以及写明 DLL 对应游戏版本的发布说明。标签里带 `-` 的（例如 `v0.2.0-rc1`）会作为预发布版本。
 
 ## 基准测试和压力测试
 
