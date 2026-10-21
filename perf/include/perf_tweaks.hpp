@@ -48,6 +48,10 @@ struct Settings {
     // Fleet parallel-for (each micro tick): one fleet per chunk instead of fleets / tasks / 3, so a
     // doomstack does not leave the other threads idle (a 5-byte code patch, restored when off)
     bool fleet_parallel_grain1 = true;
+    // Large-block recycler (perf_alloc.hpp): the engine's big temporary arrays get back the block the same
+    // thread freed last, still warm in that core's cache. alloc_cache_mb is what each thread keeps cached.
+    bool alloc_cache = true;
+    int alloc_cache_mb = 8;
     // Profile of scope resolution (CEventTarget::GetScope, CEventScope::Copy) per game day
     bool scope_profile = false;
     int modifier_flush_max = 32;  // largest dirty set taking the serial path

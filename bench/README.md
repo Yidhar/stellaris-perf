@@ -10,6 +10,7 @@ Automated performance measurement for `stellaris_perf.dll`. Nothing here is need
 | Stats of `stellaris_perf.dll` | Read-only shared memory `Local\stellaris_perf_stats_<pid>` (`perf/include/perf_shared.hpp`): the settings in effect, `CFleetManagerView::Update` call counts, cache and throttle counters. The plugin itself has no control channel; settings only come from `stellaris_perf.ini`. |
 | `scripts/dllctl.py` | Loads or unloads both DLLs (remote `LoadLibraryW`; unloading asks the DLL to unload itself, never `FreeLibrary` from outside). The plugin DLL is loaded from its plugin folder, so it finds `config\` and `logs\` there (see below). |
 | `scripts/bench_fm.py` | A/B in one continuous run, no save reloads needed. |
+| `scripts/ab_setting.py` | A/B of any `stellaris_perf.ini` keys in one running game, ABBA / BAAB groups, reporting wall milliseconds and process CPU milliseconds per game day with a paired 95 % interval. Meant for battles that only last a few dozen days: run it once per group after `game_session.py load`. |
 | `scripts/game_session.py` | Automatic save loading: restarts the game on a chosen save, loads the DLLs, pauses, opens the fleet manager. |
 | `scripts/stellaris_paths.py` | Finds the game folder (Steam libraries) and the Documents folder; used by the other scripts. |
 | `scripts/rule_report.py` | Names the rules in `stellaris_perf_rules.csv` (`rule_profile=1`) from live game memory. |

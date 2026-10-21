@@ -1,5 +1,6 @@
 #include "perf_tweaks.hpp"
 #include "perf_shared.hpp"
+#include "perf_alloc.hpp"
 #include "stellaris_sdk.hpp"
 #include "MinHook.h"
 
@@ -1391,6 +1392,7 @@ bool Install(uintptr_t base) {
               "CEventScope::Copy") && ok;
     ok = Hook(base + sdk::fn::GetDynamicFlag, (void*)&GetDynamicFlagDetour, (void**)&g_orig_dyn_flag, "GetDynamicFlag") && ok;
     g_installed = ok;
+    if (ok) alloc::Install(base);  // not essential: without it only the recycler is missing
     return ok;
 }
 
@@ -1408,6 +1410,7 @@ void Uninstall() {
     for (int i = 0; i < 200 && (g_in_tick.load() != 0 || g_ticks_done.load() < done + 2); ++i) Sleep(10);
     for (int i = 0; i < 1000 && g_in_tick.load() != 0; ++i) Sleep(10);
     Sleep(500);
+    alloc::Shutdown();  // the cached blocks go back to the heap while the original free is still reachable
     MH_Uninitialize();
     {
         std::lock_guard<std::mutex> lock(g_tables_mutex);
@@ -1444,6 +1447,7 @@ void Apply(const Settings& s) {
     g_rule_profile = s.rule_profile;
     g_flag_mode = s.flag_simd;
     SetFleetGrain1(s.fleet_parallel_grain1);
+    alloc::Configure(s.alloc_cache, s.alloc_cache_mb);
     if (s.scope_profile && !g_scope_profile.load()) {
         for (int a = 0; a < 2; ++a)
             for (int b = 0; b < 2; ++b) {
@@ -1513,6 +1517,12 @@ void Publish() {
         shared->flag_mismatch = g_flag_mismatch.load();
         shared->expiry_skipped = g_expiry_stats.hits.load();
         shared->expiry_passed = g_expiry_stats.misses.load();
+        const alloc::Counters ac = alloc::Read();
+        shared->alloc_hits = ac.hits;
+        shared->alloc_misses = ac.misses;
+        shared->alloc_evictions = ac.evictions;
+        shared->alloc_rejects = ac.rejects;
+        shared->alloc_cached_bytes = ac.cached_bytes;
     }
 }
 
@@ -1543,6 +1553,16 @@ std::string FlushStats() {
         }
     }
     return out;
+}
+
+std::string AllocStats() {
+    const alloc::Counters c = alloc::Read();
+    char buf[200];
+    snprintf(buf, sizeof(buf), "alloc_cache=%s hits=%llu misses=%llu evictions=%llu rejects=%llu untracked=%llu cached=%.1fMB tracked=%llu",
+             !c.installed ? "unavailable" : (c.on ? "on" : "off"), (unsigned long long)c.hits, (unsigned long long)c.misses,
+             (unsigned long long)c.evictions, (unsigned long long)c.rejects, (unsigned long long)c.untracked,
+             c.cached_bytes / 1048576.0, (unsigned long long)c.tracked);
+    return std::string(buf);
 }
 
 std::string StatsLine() {
@@ -1581,7 +1601,7 @@ std::string StatsLine() {
            one("flag_simd(hits=static misses=dynamic bypass=unreadable)", g_flag_stats, g_flag_mode.load() != 0) +
            " mismatches=" + std::to_string(g_flag_mismatch.load()) + " | " +
            one("flag_expiry_skip(hits=skipped)", g_expiry_stats, g_expiry_skip.load()) +
-           " | " + FlushStats() + " | " + ScopeStats() +
+           " | " + AllocStats() + " | " + FlushStats() + " | " + ScopeStats() +
            " | gen=" + std::to_string(g_gen.load()) + prof;
 }
 

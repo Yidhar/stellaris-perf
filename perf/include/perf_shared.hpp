@@ -36,6 +36,11 @@ struct SharedStats {
     uint64_t flag_mismatch;   // verify mode: SSE2 answer differed from the game's
     uint64_t expiry_skipped;  // UpdateFlags calls skipped
     uint64_t expiry_passed;
+    uint64_t alloc_hits;          // large-block recycler: allocations answered from a cache (published every 2 s)
+    uint64_t alloc_misses;
+    uint64_t alloc_evictions;
+    uint64_t alloc_rejects;
+    uint64_t alloc_cached_bytes;
 };
 #pragma pack(pop)
 

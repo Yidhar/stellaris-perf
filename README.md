@@ -81,6 +81,15 @@ are off pass straight through to the engine.
 - **Fleet manager window: reinforcement recalculation throttle** (`fleet_manager_reinforce_ms`, default 1000). With
   the window open the engine reruns the "which ships need reinforcement" pass for 10 ms of every 80 ms whether or not
   anything changed; the plugin lets it run at most once per interval. Display only.
+- **Large-block recycler** (`alloc_cache`, `alloc_cache_mb`). In a big battle the engine builds and frees several
+  hundred-KB arrays per fleet on every combat tick (the targeting tables), each with a plain `operator new` / `free`
+  pair, so every tick takes cold memory from the heap and gives it back. The plugin hooks `operator new` and `free`
+  and keeps the last few blocks of 128 KB and more that each thread freed (up to `alloc_cache_mb` per thread, 8 MB by
+  default); the next request of that size on the thread gets the same block back, still warm in the core's cache. The
+  blocks are ordinary heap blocks without a header, so the engine can free one at any time, also after the plugin is
+  gone, and a block's contents are never assumed to be zero (`operator new` does not promise that either). A block is
+  only reused when the heap still reports it large enough. Switching the key off removes the hooks and returns the
+  cached blocks to the heap.
 
 ### Optional
 
@@ -133,6 +142,8 @@ clones.
 |---|---|---|
 | `frame_smoothing` | `-1` | `-1` leave the game's setting, `0` off, `1` on |
 | `fleet_parallel_grain1` | `1` | one fleet per parallel work chunk |
+| `alloc_cache` | `1` | large-block recycler for the engine's `operator new` / `free` |
+| `alloc_cache_mb` | `8` | most memory each thread keeps cached (MB, `0` = off) |
 | `fleet_manager_cache` | `1` | cache fleet military power in the fleet manager window |
 | `fleet_manager_reinforce_ms` | `1000` | minimum ms between reinforcement recalculations (`0` = the game's own throttle) |
 | `flag_simd` | `1` | `0` engine scan, `1` SSE2 scan, `2` verify |

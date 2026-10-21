@@ -126,12 +126,13 @@ class Bench:
 
 
 # perf_shared.hpp: SharedStats
-PERF_STATS_FMT = "<IIQiiiiiiiiQQQQQQQQQQQ"
+PERF_STATS_FMT = "<IIQiiiiiiiiQQQQQQQQQQQQQQQQ"
 PERF_STATS_FIELDS = ("magic", "size", "applied_seq", "frame_smoothing", "opinion_cache", "rule_cache",
                      "fleet_manager_cache", "fleet_manager_reinforce_ms", "flag_simd", "flag_expiry_skip", "fleet_parallel_grain1",
                      "fleet_manager_updates", "reinforce_skipped", "reinforce_passed", "fleet_power_hits",
                      "fleet_power_misses", "flag_static", "flag_dynamic", "flag_unreadable", "flag_mismatch",
-                     "expiry_skipped", "expiry_passed")
+                     "expiry_skipped", "expiry_passed", "alloc_hits", "alloc_misses", "alloc_evictions",
+                     "alloc_rejects", "alloc_cached_bytes")
 PERF_MAGIC = 0x31465250
 
 
@@ -153,7 +154,7 @@ class PerfStats:
 def write_perf_ini(frame_smoothing=-1, opinion_cache=0, rule_cache=0, fleet_manager_cache=0,
                    fleet_manager_reinforce_ms=0, flag_simd=0, flag_expiry_skip=0, profile=0, rule_profile=0,
                    modifier_flush=0, modifier_flush_max=32, fleet_parallel_grain1=0,
-                   scope_profile=0):
+                   scope_profile=0, alloc_cache=0, alloc_cache_mb=8):
     os.makedirs(os.path.dirname(PERF_INI), exist_ok=True)
     with open(PERF_INI, "w") as f:
         f.write("[perf]\n"
@@ -169,4 +170,6 @@ def write_perf_ini(frame_smoothing=-1, opinion_cache=0, rule_cache=0, fleet_mana
                 f"modifier_flush={modifier_flush}\n"
                 f"modifier_flush_max={modifier_flush_max}\n"
                 f"fleet_parallel_grain1={fleet_parallel_grain1}\n"
-                f"scope_profile={scope_profile}\n")
+                f"scope_profile={scope_profile}\n"
+                f"alloc_cache={alloc_cache}\n"
+                f"alloc_cache_mb={alloc_cache_mb}\n")

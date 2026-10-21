@@ -12,6 +12,7 @@
 | `stellaris_perf.dll` 的统计共享内存 | `Local\stellaris_perf_stats_<pid>`（`perf/include/perf_shared.hpp`），只读。内容包括当前生效的设置、`CFleetManagerView::Update` 的调用次数、缓存和节流计数。优化 DLL 本身没有任何控制通道，设置仍然只从 `stellaris_perf.ini` 读取。 |
 | `scripts/dllctl.py` | 加载或卸载两个 DLL。加载是远程 `LoadLibraryW`；卸载通过设置 DLL 自己的事件，由 DLL 摘掉钩子、等进行中的调用都结束后自行卸载，从不在外部调用 `FreeLibrary`。 |
 | `scripts/bench_fm.py` | 在一次连续运行里做 A/B，不需要读档。 |
+| `scripts/ab_setting.py` | 在运行中的游戏里对任意 `stellaris_perf.ini` 键做 A/B，ABBA / BAAB 分组，报告每个游戏日的墙钟毫秒和进程 CPU 毫秒，以及配对的 95% 区间。适用于只持续几十天的战斗：每组在 `game_session.py load` 之后运行一次。 |
 | `scripts/game_session.py` | 自动读档：用指定存档重启游戏，加载 DLL，暂停，打开舰队管理器。 |
 | `scripts/stellaris_paths.py` | 找到游戏目录（Steam 库）和 Documents 目录，其他脚本都用它。 |
 | `scripts/rule_report.py` | 从游戏内存里为 `logs\stellaris_perf_rules.csv`（`rule_profile=1`）里的规则命名。 |

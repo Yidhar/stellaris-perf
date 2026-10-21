@@ -102,6 +102,8 @@ perf::Settings ReadIni(const std::wstring& path) {
     s.fleet_parallel_grain1 = GetPrivateProfileIntW(L"perf", L"fleet_parallel_grain1", 1, p) != 0;
     s.scope_profile = GetPrivateProfileIntW(L"perf", L"scope_profile", 0, p) != 0;
     s.modifier_flush_max = GetPrivateProfileIntW(L"perf", L"modifier_flush_max", 32, p);
+    s.alloc_cache = GetPrivateProfileIntW(L"perf", L"alloc_cache", 1, p) != 0;
+    s.alloc_cache_mb = GetPrivateProfileIntW(L"perf", L"alloc_cache_mb", 8, p);
     return s;
 }
 

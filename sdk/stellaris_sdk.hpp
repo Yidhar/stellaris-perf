@@ -8,6 +8,7 @@
 
 namespace sdk {
 inline constexpr uint32_t kExeTimestamp = 0x6ABEAA3F;  // PE TimeDateStamp this SDK was dumped from
+inline constexpr uintptr_t kRvaEngineAlloc = 0x2021868;
 
 namespace glob {
     inline constexpr uintptr_t CRandom_Forbidden = 0x2813CFD;  // CRandom_Forbidden  score=anchor live=anchor
@@ -22,7 +23,6 @@ namespace rt {
     inline constexpr std::ptrdiff_t CEventScope_from = 0x38;
     inline constexpr std::ptrdiff_t CEventTarget_is_event_target = 0x198;
     inline constexpr std::ptrdiff_t CFleetManagerView_reinforce_due = 0x32B8;
-    inline constexpr std::ptrdiff_t CGameIdler_is_multiplayer = 0x180;
     inline constexpr std::ptrdiff_t CGameState_date_hours = 0xC0;
     inline constexpr std::ptrdiff_t CHasFlagTrigger_dynamic_size = 0x248;
     inline constexpr std::ptrdiff_t CHasFlagTrigger_flag = 0x220;
@@ -56,8 +56,6 @@ namespace fn {
     inline constexpr uintptr_t CFleetManagerView_Update = 0x112A960;
     inline constexpr uintptr_t CFleet_CalcMilitaryPower = 0xC7F9A0;
     inline constexpr uintptr_t CGameState_HandleTurnTick = 0x251800;
-    inline constexpr uintptr_t CGameState_OnNewGameStarted = 0x2710D0;
-    inline constexpr uintptr_t CGameState_OnSavedGameStarted = 0x271950;
     inline constexpr uintptr_t CHasFlagTrigger_ActualEvaluate = 0x195A7A0;
     inline constexpr uintptr_t CInGameIdler_SetGameSpeed = 0x934C50;
     inline constexpr uintptr_t CInGameIdler_SetPaused = 0x935340;
@@ -65,6 +63,7 @@ namespace fn {
     inline constexpr uintptr_t CModifierNodeManager_AddInvalid = 0x2396C0;
     inline constexpr uintptr_t CModifierNodeManager_Update = 0x29D9D0;
     inline constexpr uintptr_t CPdxIntegerFlags_UpdateFlags = 0x1A7D8C0;
+    inline constexpr uintptr_t CRT_operator_delete = 0x20218A4;
     inline constexpr uintptr_t CRandomLog_Get = 0x1B481F0;
     inline constexpr uintptr_t CScriptedRule_Evaluate = 0x5B7430;
     inline constexpr uintptr_t GetDynamicFlag = 0x9F7A80;

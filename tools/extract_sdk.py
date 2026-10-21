@@ -54,12 +54,15 @@ def main():
         lines = f.read().splitlines()
     used, top, ent_used = used_symbols()
 
-    # preamble: only the exe timestamp (the allocator RVAs and CmdSpec of the full header are not used here)
-    preamble = [l for l in lines if "kExeTimestamp" in l and "inline constexpr" in l]
-    if not preamble:
+    # preamble: the exe timestamp and the top-level constants the sources use (e.g. sdk::kRvaEngineAlloc); CmdSpec and
+    # the rest of the full header are not used here
+    first_ns = next(i for i, l in enumerate(lines) if re.match(r"namespace (glob|db|rt|vt|fn) \{", l))
+    wanted = {"kExeTimestamp"} | {t for t in top if re.match(r"k[A-Z]", t)}
+    preamble = [l for l in lines[:first_ns] if l.lstrip().startswith("inline constexpr")
+                and any(re.search(r"\b" + re.escape(t) + r"\b", l.split("=")[0]) for t in wanted)]
+    if not any("kExeTimestamp" in l for l in preamble):
         print("kExeTimestamp not found in the full header", file=sys.stderr)
         return 1
-    first_ns = next(i for i, l in enumerate(lines) if re.match(r"namespace (glob|db|rt|vt|fn) \{", l))
 
     out = [
         "// SUBSET of the generated Stellaris SDK header, written by tools/extract_sdk.py. DO NOT EDIT.",
