@@ -33,9 +33,9 @@ struct Settings {
     int fleet_manager_reinforce_ms = 1000;
     // has_*_flag: 0 = the game's scan, 1 = SSE2 scan of the same ids (same answer), 2 = verify
     // (the game answers, the SSE2 scan runs too and mismatches are counted)
-    int flag_simd = 0;
+    int flag_simd = 1;
     // Daily flag expiry: skip containers without a timed flag (the game changes nothing there).
-    bool flag_expiry_skip = false;
+    bool flag_expiry_skip = true;
     // Times every call of the hooked functions whose cache is off, split into the main thread and
     // the others, per game day (reported by StatsLine).
     bool profile = false;
@@ -51,24 +51,11 @@ struct Settings {
     // Profile of scope resolution (CEventTarget::GetScope, CEventScope::Copy) per game day
     bool scope_profile = false;
     int modifier_flush_max = 32;  // largest dirty set taking the serial path
-    // Multiplayer is lock-step: every client must compute the same result. 1 = when the game being
-    // played is a multiplayer session, every setting that touches the simulation is forced off;
-    // 0 = never override (an out-of-sync error is likely if clients differ); 2 = act as if in
-    // multiplayer (to test the guard in a single-player game). Checked when a game starts (see
-    // CheckMultiplayer), not continuously.
-    int multiplayer_guard = 1;
-
     bool operator==(const Settings&) const = default;
 };
 
-// The settings from the ini. Applies them (as the multiplayer guard allows) and returns true when the
-// settings in effect changed.
+// The settings from the ini. Applies them and returns true when the settings in effect changed.
 bool SetUserSettings(const Settings& s);
-// Reads the game's multiplayer flag (the idler byte the engine's is_multiplayer trigger tests) and
-// applies the guard accordingly. Called once when the DLL is loaded and, before the start scripts run,
-// each time a game starts: CGameState::OnNewGameStarted (new galaxy) and OnSavedGameStarted (loaded
-// save, also a client joining a multiplayer game). `why` is only logged.
-void CheckMultiplayer(const char* why);
 
 // Checks the exe against the SDK and installs the hooks (they pass through while disabled).
 bool Install(uintptr_t base);

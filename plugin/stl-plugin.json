@@ -3,7 +3,7 @@
   "id": "stellaris-perf",
   "name": "Performance",
   "version": "0.2.0",
-  "description": "Faster fleet updates, fleet manager window and flag checks, optional per-day caches; a multiplayer guard keeps the simulation identical on every client.",
+  "description": "Faster fleet updates, fleet manager window and flag checks, optional per-day caches. Multiplayer: every player needs the plugin with the same settings.",
   "dll": "stellaris_perf.dll",
   "game": { "exe_timestamps": ["0x6ABEAA3F"] },
   "load": { "wait": "window", "delay_ms": 1500 },

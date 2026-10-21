@@ -94,15 +94,14 @@ perf::Settings ReadIni(const std::wstring& path) {
     s.rule_cache = GetPrivateProfileIntW(L"perf", L"rule_cache", 0, p);
     s.fleet_manager_cache = GetPrivateProfileIntW(L"perf", L"fleet_manager_cache", 1, p) != 0;
     s.fleet_manager_reinforce_ms = GetPrivateProfileIntW(L"perf", L"fleet_manager_reinforce_ms", 1000, p);
-    s.flag_simd = GetPrivateProfileIntW(L"perf", L"flag_simd", 0, p);
-    s.flag_expiry_skip = GetPrivateProfileIntW(L"perf", L"flag_expiry_skip", 0, p) != 0;
+    s.flag_simd = GetPrivateProfileIntW(L"perf", L"flag_simd", 1, p);
+    s.flag_expiry_skip = GetPrivateProfileIntW(L"perf", L"flag_expiry_skip", 1, p) != 0;
     s.profile = GetPrivateProfileIntW(L"perf", L"profile", 0, p) != 0;
     s.rule_profile = GetPrivateProfileIntW(L"perf", L"rule_profile", 0, p) != 0;
     s.modifier_flush = GetPrivateProfileIntW(L"perf", L"modifier_flush", 0, p);
     s.fleet_parallel_grain1 = GetPrivateProfileIntW(L"perf", L"fleet_parallel_grain1", 1, p) != 0;
     s.scope_profile = GetPrivateProfileIntW(L"perf", L"scope_profile", 0, p) != 0;
     s.modifier_flush_max = GetPrivateProfileIntW(L"perf", L"modifier_flush_max", 32, p);
-    s.multiplayer_guard = GetPrivateProfileIntW(L"perf", L"multiplayer_guard", 1, p);
     return s;
 }
 
@@ -127,10 +126,6 @@ DWORD WINAPI Worker(LPVOID) {
     const std::wstring config_dir = dir.empty() ? L"" : dir + L"\\config";
     const std::wstring config_file = dir.empty() ? L"" : config_dir + L"\\stellaris_perf.ini";
     if (!dir.empty()) MigrateGameFolderIni(config_dir, config_file);
-
-    // A game that is already running when the DLL is loaded started before the hooks existed: read its
-    // multiplayer flag now. Later games are checked by the hooks, when they start.
-    perf::CheckMultiplayer("DLL loaded");
 
     perf::Settings settings;  // the built-in defaults until a file is read
     FileStamp stamp;

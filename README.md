@@ -22,7 +22,8 @@ The repository also contains the benchmark and stress-test tooling used to find 
 - Engine addresses are not hard-coded: they come from an SDK generated from the installed executable
   (`sdk/stellaris_sdk.hpp`, a subset written by `tools/extract_sdk.py`).
 - Mods are fine: the plugin changes how the engine computes, not what scripts or data say.
-- Single player is the tested case. For multiplayer see [Multiplayer](#multiplayer).
+- Multiplayer works like a gameplay mod: every player needs the plugin with the same settings (see
+  [Multiplayer](#multiplayer)).
 
 ## Install and use
 
@@ -59,8 +60,14 @@ old settings over it by hand.
 Every optimization is a hook (or a 5-byte code patch) that is switched by one `config\stellaris_perf.ini` key. Hooks that
 are off pass straight through to the engine.
 
-### On by default: the simulation result is unchanged
+### On by default: the answer is the engine's own
 
+- **`has_*_flag` scan** (`flag_simd`, default `1`). The engine compares one flag id per loop iteration against an
+  unordered array. `1` answers the same question with an SSE2 scan, 8 ids per compare, never reading at or past the
+  array end. `2` also runs the engine's own scan and counts any disagreement. Dynamic `flag@scope` names and unreadable
+  containers are left to the engine.
+- **Daily flag expiry** (`flag_expiry_skip`). The expiry pass touches only flags that have a timer; containers
+  without a timed flag are skipped, since the engine would change nothing there.
 - **Fleet update, one fleet per work chunk** (`fleet_parallel_grain1`). The engine's per-micro-tick fleet and ship
   update divides the fleets over its worker threads in chunks of `fleets / tasks / 3`. With a few very large fleets
   one chunk holds the big fleet while the other threads sit idle. A 5-byte patch of the chunk-size clamp makes every
@@ -75,14 +82,8 @@ are off pass straight through to the engine.
   the window open the engine reruns the "which ships need reinforcement" pass for 10 ms of every 80 ms whether or not
   anything changed; the plugin lets it run at most once per interval. Display only.
 
-### Optional, exact: same answer as the engine
+### Optional
 
-- **`has_*_flag` scan** (`flag_simd`). The engine compares one flag id per loop iteration against an unordered array.
-  `1` answers the same question with an SSE2 scan, 8 ids per compare, never reading at or past the array end. `2` also
-  runs the engine's own scan and counts any disagreement. Dynamic `flag@scope` names and unreadable containers are left
-  to the engine.
-- **Daily flag expiry** (`flag_expiry_skip`). The expiry pass touches only flags that have a timer; containers
-  without a timed flag are skipped, since the engine would change nothing there.
 - **Frame smoothing** (`frame_smoothing`). Sets the engine's own `g_bFrameSmoothing` (the `smooth` console command):
   with it on, the game renders frames in the middle of a tick (smoother UI, slower simulation). `-1` leaves the game's
   setting alone.
@@ -134,13 +135,12 @@ clones.
 | `fleet_parallel_grain1` | `1` | one fleet per parallel work chunk |
 | `fleet_manager_cache` | `1` | cache fleet military power in the fleet manager window |
 | `fleet_manager_reinforce_ms` | `1000` | minimum ms between reinforcement recalculations (`0` = the game's own throttle) |
-| `flag_simd` | `0` | `0` engine scan, `1` SSE2 scan, `2` verify |
-| `flag_expiry_skip` | `0` | skip daily expiry on containers without timed flags |
+| `flag_simd` | `1` | `0` engine scan, `1` SSE2 scan, `2` verify |
+| `flag_expiry_skip` | `1` | skip daily expiry on containers without timed flags |
 | `opinion_cache` | `0` | per-game-day opinion cache |
 | `rule_cache` | `0` | `0` off, `1` every rule, `2` adaptive |
 | `modifier_flush` | `0` | `0` engine, `1` serial fast path, `2` verify, `3` control |
 | `modifier_flush_max` | `32` | largest dirty set that takes the serial path |
-| `multiplayer_guard` | `1` | `1` force simulation-affecting settings off in a multiplayer session, `0` never override, `2` test (act as if in multiplayer) |
 | `profile`, `rule_profile`, `scope_profile` | `0` | diagnostics |
 
 ## How it is built to be safe
@@ -155,28 +155,16 @@ clones.
 
 ## Multiplayer
 
-Stellaris multiplayer is lock-step: every client simulates the same game and compares checksums, so anything that
-changes a result on one client only ends in an out-of-sync error.
+Stellaris multiplayer is lock-step: every client simulates the same game and compares checksums. The plugin is meant to
+be used the way a gameplay mod is: **every player in the game runs it, with the same settings**. There is no
+multiplayer-specific code in it, and a game where only some players have the plugin is not a supported setup.
 
-The plugin therefore has a **multiplayer guard** (`multiplayer_guard`, on by default). It reads the game's own
-multiplayer flag (the byte the engine's `is_multiplayer` trigger tests) **once each time a game starts**: when a new
-galaxy starts (`CGameState::OnNewGameStarted`), when a saved game starts (`CGameState::OnSavedGameStarted`, which is also
-how a client joining a multiplayer game starts; the engine uses the same flag there to decide whether
-`on_single_player_save_game_load` fires), and once when the DLL is loaded, for a game that was already running. The check
-runs before the game's start scripts do. If the game is a multiplayer session, everything that runs inside or changes
-the simulation is forced off, whatever the settings file says: `opinion_cache`, `rule_cache`, `modifier_flush`,
-`flag_simd`, `flag_expiry_skip` and `fleet_parallel_grain1`. What stays is what only changes this client's display or
-measurements: the fleet manager window caches, `frame_smoothing` and the profilers. Starting a single-player game
-again makes the settings from the file apply again. Each check and each change is written to `logs\stellaris_perf.log`.
-
-- `multiplayer_guard=1`: the behaviour above (default).
-- `multiplayer_guard=0`: never override. Every player must then use identical settings, or an out-of-sync error is
-  likely; the log warns when this is active in a multiplayer session.
-- `multiplayer_guard=2`: act as if in multiplayer, to see the guard work in a single-player game.
-
-The guard has been checked in a single-player game: the flag is read when a save starts (and reads as off), and
-`multiplayer_guard=2` switches the settings off and back on, including the 5-byte fleet patch. It has **not been tested
-in a real multiplayer session**.
+What the plugin has to guarantee is that two clients that both run it compute the same results. Every optimization that
+is on by default returns the engine's own answer (or an answer that does not depend on which thread or in which order it
+was computed), so the simulation stays identical. The per-day caches (`opinion_cache`, `rule_cache`) and the modifier
+fast path (`modifier_flush`) are off because their results can depend on which worker thread filled a cache first; they
+stay out until that is redesigned. A settings file that differs between players changes the plugin's behaviour on one
+client only, so keep the files the same.
 
 ## Building
 
