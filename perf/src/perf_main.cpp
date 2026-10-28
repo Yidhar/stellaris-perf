@@ -104,6 +104,7 @@ perf::Settings ReadIni(const std::wstring& path) {
     s.modifier_flush_max = GetPrivateProfileIntW(L"perf", L"modifier_flush_max", 32, p);
     s.alloc_cache = GetPrivateProfileIntW(L"perf", L"alloc_cache", 1, p) != 0;
     s.alloc_cache_mb = GetPrivateProfileIntW(L"perf", L"alloc_cache_mb", 8, p);
+    s.combat_no_copy = GetPrivateProfileIntW(L"perf", L"combat_no_copy", 1, p) != 0;
     return s;
 }
 

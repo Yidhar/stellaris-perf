@@ -1,6 +1,7 @@
 #include "perf_tweaks.hpp"
 #include "perf_shared.hpp"
 #include "perf_alloc.hpp"
+#include "perf_combat.hpp"
 #include "stellaris_sdk.hpp"
 #include "MinHook.h"
 
@@ -393,6 +394,7 @@ thread_local FleetPowerEntry* t_fleet_power = nullptr;
 void HandleTurnTickDetour(void* game_state, void* commands) {
     g_in_tick.fetch_add(1);
     g_main_tid.store(GetCurrentThreadId(), std::memory_order_relaxed);
+    combat::Sync();  // the worker threads are idle between ticks: the only safe moment to change code they run
     const uint64_t t0 = __rdtsc();
     g_orig_turn_tick(game_state, commands);
     g_tick_cycles.fetch_add(__rdtsc() - t0, std::memory_order_relaxed);
@@ -1392,7 +1394,10 @@ bool Install(uintptr_t base) {
               "CEventScope::Copy") && ok;
     ok = Hook(base + sdk::fn::GetDynamicFlag, (void*)&GetDynamicFlagDetour, (void**)&g_orig_dyn_flag, "GetDynamicFlag") && ok;
     g_installed = ok;
-    if (ok) alloc::Install(base);  // not essential: without it only the recycler is missing
+    if (ok) {  // not essential: without them only these two optimizations are missing
+        alloc::Install(base);
+        combat::Install(base);
+    }
     return ok;
 }
 
@@ -1401,6 +1406,8 @@ void Uninstall() {
     if (!g_installed) return;
     g_opinion_on = false;
     g_rule_on = false;
+    combat::Want(false);  // restored by the tick detour at the start of the next tick
+    for (int i = 0; i < 300 && combat::Patched(); ++i) Sleep(10);
     MH_DisableHook(MH_ALL_HOOKS);
     // A thread can still be inside a detour (or its trampoline) that it entered before the disable.
     // The tick detour lasts a whole tick: wait until it has left and two more ticks completed (or
@@ -1410,6 +1417,7 @@ void Uninstall() {
     for (int i = 0; i < 200 && (g_in_tick.load() != 0 || g_ticks_done.load() < done + 2); ++i) Sleep(10);
     for (int i = 0; i < 1000 && g_in_tick.load() != 0; ++i) Sleep(10);
     Sleep(500);
+    combat::ForceRestore();  // paused game: no tick came; the workers are idle
     alloc::Shutdown();  // the cached blocks go back to the heap while the original free is still reachable
     MH_Uninitialize();
     {
@@ -1448,6 +1456,7 @@ void Apply(const Settings& s) {
     g_flag_mode = s.flag_simd;
     SetFleetGrain1(s.fleet_parallel_grain1);
     alloc::Configure(s.alloc_cache, s.alloc_cache_mb);
+    combat::Want(s.combat_no_copy);
     if (s.scope_profile && !g_scope_profile.load()) {
         for (int a = 0; a < 2; ++a)
             for (int b = 0; b < 2; ++b) {
@@ -1601,7 +1610,7 @@ std::string StatsLine() {
            one("flag_simd(hits=static misses=dynamic bypass=unreadable)", g_flag_stats, g_flag_mode.load() != 0) +
            " mismatches=" + std::to_string(g_flag_mismatch.load()) + " | " +
            one("flag_expiry_skip(hits=skipped)", g_expiry_stats, g_expiry_skip.load()) +
-           " | " + AllocStats() + " | " + FlushStats() + " | " + ScopeStats() +
+           " | combat_no_copy=" + (combat::Patched() ? "on" : (combat::Installed() ? "off" : "unavailable")) + " | " + AllocStats() + " | " + FlushStats() + " | " + ScopeStats() +
            " | gen=" + std::to_string(g_gen.load()) + prof;
 }
 

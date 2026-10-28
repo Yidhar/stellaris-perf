@@ -90,6 +90,13 @@ are off pass straight through to the engine.
   gone, and a block's contents are never assumed to be zero (`operator new` does not promise that either). A block is
   only reused when the heap still reports it large enough. Switching the key off removes the hooks and returns the
   cached blocks to the heap.
+- **Combat participants shared, not copied** (`combat_no_copy`). The engine's parallel ship update looks up each
+  ship's fleet in its combat-participants table and, for a fleet that has an entry, deep-copies the entry (seven arrays,
+  each as long as the number of ships in the system) for every ship, only to pass it as a read-only argument to
+  `CShip::MicroUpdateParallel`, and frees the copy again. The plugin patches that copy away (an 11-byte code patch
+  found by its byte pattern, which must match exactly once): the callee gets the table's own object and the code that
+  would destroy the copy is skipped. The table is not changed while the ships are updated, so every ship sees the data
+  it saw before. The patch is written and removed only between ticks, while the worker threads are idle.
 
 ### Optional
 
@@ -144,6 +151,7 @@ clones.
 | `fleet_parallel_grain1` | `1` | one fleet per parallel work chunk |
 | `alloc_cache` | `1` | large-block recycler for the engine's `operator new` / `free` |
 | `alloc_cache_mb` | `8` | most memory each thread keeps cached (MB, `0` = off) |
+| `combat_no_copy` | `1` | share the combat participants table's object instead of copying it per ship |
 | `fleet_manager_cache` | `1` | cache fleet military power in the fleet manager window |
 | `fleet_manager_reinforce_ms` | `1000` | minimum ms between reinforcement recalculations (`0` = the game's own throttle) |
 | `flag_simd` | `1` | `0` engine scan, `1` SSE2 scan, `2` verify |
