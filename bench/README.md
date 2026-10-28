@@ -11,6 +11,7 @@ Automated performance measurement for `stellaris_perf.dll`. Nothing here is need
 | `scripts/dllctl.py` | Loads or unloads both DLLs (remote `LoadLibraryW`; unloading asks the DLL to unload itself, never `FreeLibrary` from outside). The plugin DLL is loaded from its plugin folder, so it finds `config\` and `logs\` there (see below). |
 | `scripts/bench_fm.py` | A/B in one continuous run, no save reloads needed. |
 | `scripts/ab_setting.py` | A/B of any `stellaris_perf.ini` keys in one running game, ABBA / BAAB groups, reporting wall milliseconds and process CPU milliseconds per game day with a paired 95 % interval. Meant for battles that only last a few dozen days: run it once per group after `game_session.py load`. |
+| `scripts/regress_ab.py` | Effect of one arm over the `ab_setting.py` output files of several groups, with group and position fixed effects and a 95 % interval (needs numpy). Results: [RESULTS.md](RESULTS.md). |
 | `scripts/game_session.py` | Automatic save loading: restarts the game on a chosen save, loads the DLLs, pauses, opens the fleet manager. |
 | `scripts/stellaris_paths.py` | Finds the game folder (Steam libraries) and the Documents folder; used by the other scripts. |
 | `scripts/rule_report.py` | Names the rules in `stellaris_perf_rules.csv` (`rule_profile=1`) from live game memory. |
