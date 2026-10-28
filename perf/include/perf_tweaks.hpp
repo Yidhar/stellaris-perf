@@ -55,6 +55,8 @@ struct Settings {
     // Parallel ship update: pass the combat participants table's own SCombatParticipants to CShip::MicroUpdateParallel
     // instead of a deep copy per ship (perf_combat.hpp)
     bool combat_no_copy = true;
+    // Frame rate cap for frames drawn in the middle of a tick (frame smoothing); 0 = the game's own rate (perf_render.hpp)
+    int tick_render_fps = 30;
     // Profile of scope resolution (CEventTarget::GetScope, CEventScope::Copy) per game day
     bool scope_profile = false;
     int modifier_flush_max = 32;  // largest dirty set taking the serial path

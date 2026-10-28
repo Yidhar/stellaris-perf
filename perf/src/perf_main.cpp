@@ -105,6 +105,7 @@ perf::Settings ReadIni(const std::wstring& path) {
     s.alloc_cache = GetPrivateProfileIntW(L"perf", L"alloc_cache", 1, p) != 0;
     s.alloc_cache_mb = GetPrivateProfileIntW(L"perf", L"alloc_cache_mb", 8, p);
     s.combat_no_copy = GetPrivateProfileIntW(L"perf", L"combat_no_copy", 1, p) != 0;
+    s.tick_render_fps = GetPrivateProfileIntW(L"perf", L"tick_render_fps", 30, p);
     return s;
 }
 
