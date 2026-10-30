@@ -33,6 +33,15 @@ Measured as the options were added, each against the same build with only that o
 | `tick_render_fps` (30) | late game | -4.4 % (-7.1 .. -1.7) | -9.3 % (-20.0 .. +2.8), inconclusive |
 | `combat_no_copy` | arena | works, but the gain overlaps `alloc_cache`'s (same allocations) | |
 
+## Tried, no measurable effect (not shipped)
+
+| Idea | Save | Wall time | Process CPU |
+|---|---|---|---|
+| Outliner update every 500 ms instead of the engine's 100 ms while the simulation runs (hook on `CCountryTabbedOutliner::Update`, the function is two wall-clock timers and nothing else) | late game, 8 groups | -0.1 % (-4.4 .. +4.5) | -9.4 % (-20.6 .. +3.4), inconclusive |
+
+The static sweep estimated 2 to 4 % of the main thread for the outliner; with the frame cap already on, the interval
+change was not distinguishable from noise, so the hook was dropped.
+
 ## Caveats
 
 - The arena save is a stress case (16k ships fighting); the late-game save is closer to a normal long game and shows the
