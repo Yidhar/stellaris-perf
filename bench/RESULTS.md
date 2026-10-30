@@ -33,6 +33,24 @@ Measured as the options were added, each against the same build with only that o
 | `tick_render_fps` (30) | late game | -4.4 % (-7.1 .. -1.7) | -9.3 % (-20.0 .. +2.8), inconclusive |
 | `combat_no_copy` | arena | works, but the gain overlaps `alloc_cache`'s (same allocations) | |
 
+## Choosing the in-tick frame cap (`tick_render_fps`)
+
+Late-game save (an autosave of 2347, pinned as a normal save so autosave rotation cannot delete it), everything else at
+the defaults. The main thread was sampled for 100 s per setting (about 39k samples each, stack unwound from the exe's
+unwind info); the table is the share of samples inside `RenderFrame`.
+
+| `tick_render_fps` | `RenderFrame` share of the main thread | Wall time per game day |
+|---|---|---|
+| 30 | 18.9 % | 250 ms |
+| 10 | 14.3 % | 251 ms (sampled) |
+| 5 | 14.0 % | 242 ms (sampled) |
+
+The sampled wall times are within the noise. Frames are already scarce at about one or two per game day (one frame
+costs tens of milliseconds late in the game), so the cap only binds for the frames above that; 10 and 5 save the same
+4.6 points. Interleaved A/B runs (8 groups each) of 30 against 10 gave -0.7 % (95 % CI -7.3 .. +6.4) and of 30 against
+5 gave -13.1 % (-19.6 .. -6.1): both are compatible with the roughly 5 % the profile predicts, the second one is
+probably a lucky draw. The default is 10.
+
 ## Tried, no measurable effect (not shipped)
 
 | Idea | Save | Wall time | Process CPU |

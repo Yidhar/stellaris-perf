@@ -98,7 +98,7 @@ are off pass straight through to the engine.
   would destroy the copy is skipped. The table is not changed while the ships are updated, so every ship sees the data
   it saw before. The patch is written and removed only between ticks, while the worker threads are idle.
 
-- **Frame cap inside ticks** (`tick_render_fps`, default 30). With frame smoothing on, the engine draws a frame from inside
+- **Frame cap inside ticks** (`tick_render_fps`, default 10). With frame smoothing on, the engine draws a frame from inside
   the simulation whenever its refresh-rate based timer says one is due; on a high-refresh monitor that is up to the
   monitor's rate, and every such frame walks and draws the whole GUI window tree on the simulation thread. The plugin
   hooks the engine's `RenderFrame` (all 35 call sites, found by their byte pattern, must call the same function) and
@@ -159,7 +159,7 @@ clones.
 | `alloc_cache` | `1` | large-block recycler for the engine's `operator new` / `free` |
 | `alloc_cache_mb` | `8` | most memory each thread keeps cached (MB, `0` = off) |
 | `combat_no_copy` | `1` | share the combat participants table's object instead of copying it per ship |
-| `tick_render_fps` | `30` | most frames per second drawn in the middle of a tick (`0` = the game's own rate) |
+| `tick_render_fps` | `10` | most frames per second drawn in the middle of a tick (`0` = the game's own rate) |
 | `fleet_manager_cache` | `1` | cache fleet military power in the fleet manager window |
 | `fleet_manager_reinforce_ms` | `1000` | minimum ms between reinforcement recalculations (`0` = the game's own throttle) |
 | `flag_simd` | `1` | `0` engine scan, `1` SSE2 scan, `2` verify |
