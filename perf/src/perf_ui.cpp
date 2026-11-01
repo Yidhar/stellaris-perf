@@ -1,5 +1,6 @@
 #include "perf_ui.hpp"
 #include "perf_tweaks.hpp"
+#include "perf_phase.hpp"
 #include "MinHook.h"
 
 #include <windows.h>
@@ -38,7 +39,7 @@ void Report(uint64_t now) {
     g_frames = g_frame_cycles = g_ticks = g_tick_cycles = 0;
 }
 
-uint64_t FrameDetour(void* a, void* b, void* c, void* d) {
+uint64_t FrameProbe(void* a, void* b, void* c, void* d) {
     if (!g_probe.load(std::memory_order_relaxed) || g_depth > 0) return g_orig(a, b, c, d);
     ++g_depth;
     const uint64_t t0 = __rdtsc();
@@ -49,6 +50,15 @@ uint64_t FrameDetour(void* a, void* b, void* c, void* d) {
     ++g_frames;
     g_frame_cycles += t1 - t0;
     if ((double)(t1 - g_win_start) > 10.0 * g_tsc_per_sec) Report(t1);
+    return r;
+}
+
+// The phase timing (perf_phase.hpp) sees the frame function as one phase; the nested call made by RenderFrame is
+// swallowed there, so it counts as rendering.
+uint64_t FrameDetour(void* a, void* b, void* c, void* d) {
+    const bool ph = phase::Enter(phase::kFrame);
+    const uint64_t r = FrameProbe(a, b, c, d);
+    phase::Exit(ph);
     return r;
 }
 

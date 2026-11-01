@@ -154,7 +154,8 @@ class PerfStats:
 def write_perf_ini(frame_smoothing=-1, opinion_cache=0, rule_cache=0, fleet_manager_cache=0,
                    fleet_manager_reinforce_ms=0, flag_simd=0, flag_expiry_skip=0, profile=0, rule_profile=0,
                    modifier_flush=0, modifier_flush_max=32, fleet_parallel_grain1=0,
-                   scope_profile=0, alloc_cache=0, alloc_cache_mb=8, combat_no_copy=0, tick_render_fps=0, ui_probe=0, render_cap_between_ticks=0):
+                   scope_profile=0, alloc_cache=0, alloc_cache_mb=8, combat_no_copy=0, tick_render_fps=0, ui_probe=0, render_cap_between_ticks=0,
+                   phase_profile=0):
     os.makedirs(os.path.dirname(PERF_INI), exist_ok=True)
     with open(PERF_INI, "w") as f:
         f.write("[perf]\n"
@@ -176,4 +177,5 @@ def write_perf_ini(frame_smoothing=-1, opinion_cache=0, rule_cache=0, fleet_mana
                 f"combat_no_copy={combat_no_copy}\n"
                 f"tick_render_fps={tick_render_fps}\n"
                 f"ui_probe={ui_probe}\n"
-                f"render_cap_between_ticks={render_cap_between_ticks}\n")
+                f"render_cap_between_ticks={render_cap_between_ticks}\n"
+                f"phase_profile={phase_profile}\n")

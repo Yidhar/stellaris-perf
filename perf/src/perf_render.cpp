@@ -1,6 +1,7 @@
 #include "perf_render.hpp"
 #include "perf_tweaks.hpp"
 #include "perf_ui.hpp"
+#include "perf_phase.hpp"
 #include "MinHook.h"
 
 #include <windows.h>
@@ -53,7 +54,9 @@ void RenderDetour(void* a, void* b, void* c, void* d) {
         g_last = now;
     }
     g_passed.fetch_add(1, std::memory_order_relaxed);
+    const bool ph = phase::Enter(phase::kRenderTick);  // becomes render_between when no tick is running
     g_orig(a, b, c, d);
+    phase::Exit(ph);
 }
 
 }  // namespace

@@ -108,6 +108,7 @@ perf::Settings ReadIni(const std::wstring& path) {
     s.tick_render_fps = GetPrivateProfileIntW(L"perf", L"tick_render_fps", 10, p);
     s.ui_probe = GetPrivateProfileIntW(L"perf", L"ui_probe", 0, p) != 0;
     s.render_cap_between_ticks = GetPrivateProfileIntW(L"perf", L"render_cap_between_ticks", 1, p) != 0;
+    s.phase_profile = GetPrivateProfileIntW(L"perf", L"phase_profile", 0, p) != 0;
     return s;
 }
 

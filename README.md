@@ -147,6 +147,12 @@ within that day, so they are not the engine's exact behaviour and are off by def
 - `rule_profile` writes calls and cycles per game rule and per path (engine, bypass, hit, miss) to
   `logs\stellaris_perf_rules.csv` every ~30 s.
 - `scope_profile` times event-target resolution (`CEventTarget::GetScope`, dynamic `name@target` flags, scope copies).
+- `phase_profile` times the engine's phases per game day with rdtsc at their entry points: the tick and its parts (micro
+  update, daily, monthly and yearly update, the AI update including the wait for the workers, the autosave), the frames
+  drawn inside a tick and between ticks, and the frame function's own GUI update and draw. Every phase gets its exclusive
+  time. One record per game day goes to `logs\stellaris_perf_phases.json`; `python bench\scripts\phase_report.py` groups
+  the days (normal, first of a month, 1 January, 1 July) and prints ms per day and the share of the wall time, so the
+  month-start and autosave spikes are visible instead of averaged away.
 - The current settings and counters are also published in a read-only shared-memory block
   (`Local\stellaris_perf_stats_<pid>`, layout in `perf/include/perf_shared.hpp`) that the benchmark scripts read.
 
@@ -175,7 +181,7 @@ clones.
 | `rule_cache` | `0` | `0` off, `1` every rule, `2` adaptive |
 | `modifier_flush` | `0` | `0` engine, `1` serial fast path, `2` verify, `3` control |
 | `modifier_flush_max` | `32` | largest dirty set that takes the serial path |
-| `profile`, `rule_profile`, `scope_profile` | `0` | diagnostics |
+| `profile`, `rule_profile`, `scope_profile`, `phase_profile` | `0` | diagnostics |
 
 ## How it is built to be safe
 

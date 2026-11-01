@@ -1,5 +1,6 @@
 #include "perf_tweaks.hpp"
 #include "perf_shared.hpp"
+#include "perf_phase.hpp"
 #include "perf_alloc.hpp"
 #include "perf_combat.hpp"
 #include "perf_render.hpp"
@@ -31,6 +32,11 @@ std::wstring g_log_dir;  // <plugin folder>\logs; empty = no files
 void SetLogDirectory(const std::wstring& dir) {
     std::lock_guard<std::mutex> lock(g_log_mutex);
     g_log_dir = dir;
+}
+
+std::wstring LogDirectory() {
+    std::lock_guard<std::mutex> lock(g_log_mutex);
+    return g_log_dir;
 }
 
 void Log(const char* fmt, ...) {
@@ -399,8 +405,11 @@ void HandleTurnTickDetour(void* game_state, void* commands) {
     combat::Sync();  // the worker threads are idle between ticks: the only safe moment to change code they run
     render::TickBegin();
     ui::TickBegin();
+    const bool ph = phase::Enter(phase::kTick);
     const uint64_t t0 = __rdtsc();
     g_orig_turn_tick(game_state, commands);
+    phase::Exit(ph);
+    phase::OnTickEnd();
     render::TickEnd();
     ui::TickEnd();
     g_tick_cycles.fetch_add(__rdtsc() - t0, std::memory_order_relaxed);
@@ -1405,6 +1414,7 @@ bool Install(uintptr_t base) {
         combat::Install(base);
         render::Install(base);
         ui::Install(base);
+        phase::Install(base);
     }
     return ok;
 }
@@ -1468,6 +1478,7 @@ void Apply(const Settings& s) {
     render::SetFps(s.tick_render_fps);
     ui::SetProbe(s.ui_probe);
     ui::SetCapAll(s.render_cap_between_ticks);
+    phase::SetEnabled(s.phase_profile);
     if (s.scope_profile && !g_scope_profile.load()) {
         for (int a = 0; a < 2; ++a)
             for (int b = 0; b < 2; ++b) {
@@ -1528,6 +1539,8 @@ void Publish() {
     } else if (g_rule_profile.load() && ++publishes % 15 == 0) {
         DumpRuleProfile();  // every ~30 s
     }
+    static int phase_writes = 0;
+    if (phase::Enabled() && ++phase_writes % 5 == 0) phase::WriteJson();  // every ~10 s
     if (SharedStats* shared = g_shared) {
         shared->fleet_power_hits = g_fm_stats.hits.load();
         shared->fleet_power_misses = g_fm_stats.misses.load();
@@ -1621,7 +1634,7 @@ std::string StatsLine() {
            one("flag_simd(hits=static misses=dynamic bypass=unreadable)", g_flag_stats, g_flag_mode.load() != 0) +
            " mismatches=" + std::to_string(g_flag_mismatch.load()) + " | " +
            one("flag_expiry_skip(hits=skipped)", g_expiry_stats, g_expiry_skip.load()) +
-           " | tick_render_fps=" + (render::Installed() ? std::to_string(render::Dropped()) + " dropped / " + std::to_string(render::Passed()) + " drawn" : std::string("unavailable")) + " | combat_no_copy=" + (combat::Patched() ? "on" : (combat::Installed() ? "off" : "unavailable")) + " | " + AllocStats() + " | " + FlushStats() + " | " + ScopeStats() +
+           " | tick_render_fps=" + (render::Installed() ? std::to_string(render::Dropped()) + " dropped / " + std::to_string(render::Passed()) + " drawn" : std::string("unavailable")) + " | combat_no_copy=" + (combat::Patched() ? "on" : (combat::Installed() ? "off" : "unavailable")) + " | " + AllocStats() + " | " + phase::Summary() + " | " + FlushStats() + " | " + ScopeStats() +
            " | gen=" + std::to_string(g_gen.load()) + prof;
 }
 

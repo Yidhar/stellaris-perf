@@ -8,6 +8,7 @@ namespace perf {
 // Where the log files go: <plugin folder>\logs (stellaris_perf.log, stellaris_perf_rules.csv). Set once by the DLL
 // entry, before the first Log; with no folder nothing is written (the game folder is never used).
 void SetLogDirectory(const std::wstring& dir);
+std::wstring LogDirectory();
 void Log(const char* fmt, ...);
 
 // Runtime performance tweaks (config\stellaris_perf.ini of the plugin folder):
@@ -61,6 +62,9 @@ struct Settings {
     bool ui_probe = false;
     // Also apply the tick_render_fps cap to the frames drawn between ticks while the simulation runs (perf_ui.hpp)
     bool render_cap_between_ticks = true;
+    // Per-game-day timing of the engine's phases by kind of day, written to logs\stellaris_perf_phases.json
+    // (perf_phase.hpp; bench\scripts\phase_report.py prints it); measurement only
+    bool phase_profile = false;
     // Profile of scope resolution (CEventTarget::GetScope, CEventScope::Copy) per game day
     bool scope_profile = false;
     int modifier_flush_max = 32;  // largest dirty set taking the serial path

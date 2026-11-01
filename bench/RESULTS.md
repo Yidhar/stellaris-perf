@@ -76,6 +76,36 @@ more than twice as often (their samples went from 6.3 / 3.4 / 2.7 % to 15.5 / 8.
 The static sweep estimated 2 to 4 % of the main thread for the outliner; with the frame cap already on, the interval
 change was not distinguishable from noise, so the hook was dropped.
 
+## Where the time goes, per kind of day (`phase_profile`)
+
+Late-game save `late_base` (2347.01.01, pinned), the plugin's defaults plus `phase_profile=1`, 400 game days at speed 4,
+no mods, machine otherwise idle. The plugin times the engine's phases with rdtsc at their entry points and keeps one
+record per game day (`bench/scripts/phase_report.py`, raw data in [`data/phases-late-4.5.2/`](data/phases-late-4.5.2/)).
+Means over the days of each kind; incomplete days and outliers (wall time above 3x the group's median) are left out.
+Milliseconds per game day; the share is of that day's wall time.
+
+| | normal day (387 days) | 1st of a month (11) | 1 January | 1 July |
+|---|---|---|---|---|
+| wall time | 211 (median 193) | 699 | 1435 | 1550 |
+| micro update (10 ticks) | 65 (31 %) | 68 | 69 | 63 |
+| daily update | 79 (38 %) | 84 | 74 | 122 |
+| monthly update | - | 422 (60 %) | 375 | 420 |
+| yearly update | - | - | 10 | - |
+| AI update, including the wait for the workers | 16 (7 %) | 24 | 15 | 37 |
+| autosave: game-state dump on the main thread (`CSaveGameTaskManager::Update`) | - | - | 622 (43 %) | 636 (41 %) |
+| frames drawn inside ticks | 12 (6 %, 1.9 frames) | 57 (5.8 frames) | 63 (7 frames) | 58 (7 frames) |
+| frames drawn between ticks | 0.4 (0.1 frames) | 0 | 161 (27 frames, while the save waits) | 179 (28 frames) |
+| the frame function's own GUI update and draw (5 iterations a day) | 37 (18 %) | 43 | 44 | 35 |
+| unaccounted | 0.5 | 0.4 | 1.7 | 0 |
+
+- The accounting is complete: the phases add up to the wall time within about 1 ms.
+- A game year on this save: 348 normal days at 211 ms = 73 s, twelve month starts about 8 s (the monthly update alone
+  about 5 s), two autosaves about 1.6 s. The spikes are about 8 % of the wall time, but they are all of the hitching.
+- The frame function runs five times a game day (two ticks per iteration at this speed); with the frame caps only about
+  two frames a day are drawn on a normal day.
+- An earlier run of the same 400 days measured normal days at 201 ms (median 187): the machine's load moves the absolute
+  numbers by about 10 % between runs, the shares stay.
+
 ## Caveats
 
 - The arena save is a stress case (16k ships fighting); the late-game save is closer to a normal long game and shows the
