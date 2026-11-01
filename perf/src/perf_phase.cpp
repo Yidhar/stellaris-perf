@@ -1,4 +1,5 @@
 #include "perf_phase.hpp"
+#include "perf_shared.hpp"
 #include "perf_tweaks.hpp"
 #include "stellaris_sdk.hpp"
 #include "MinHook.h"
@@ -155,20 +156,31 @@ Fn g_orig[kAll];
 // xmm arguments and results pass through untouched.
 template <int P>
 uint64_t Detour(void* a, void* b, void* c, void* d, uint64_t e, uint64_t f, uint64_t g, uint64_t h) {
+    SharedStats* shared = nullptr;
+    if constexpr (P == kSave) {  // the save's window, for a sampling profiler outside the game (perf_shared.hpp)
+        if ((shared = Shared()) != nullptr) {
+            shared->save_tid = GetCurrentThreadId();
+            InterlockedExchange((volatile LONG*)&shared->save_active, 1);
+        }
+    }
+    uint64_t r;
     if (P == g_caller_slot.load(std::memory_order_relaxed)) {
         // the hook jumps here from the function's entry, so the return address is the caller's call site
         const uintptr_t site = (uintptr_t)_ReturnAddress() - g_base;
         const bool opened = Enter(P);
         const uint64_t t0 = __rdtsc();
-        const uint64_t r = g_orig[P](a, b, c, d, e, f, g, h);
+        r = g_orig[P](a, b, c, d, e, f, g, h);
         const uint64_t dt = __rdtsc() - t0;
         Exit(opened);
         if (opened) RecordCaller(site, dt);
-        return r;
+    } else {
+        const bool opened = Enter(P);
+        r = g_orig[P](a, b, c, d, e, f, g, h);
+        Exit(opened);
     }
-    const bool opened = Enter(P);
-    const uint64_t r = g_orig[P](a, b, c, d, e, f, g, h);
-    Exit(opened);
+    if constexpr (P == kSave) {
+        if (shared) InterlockedExchange((volatile LONG*)&shared->save_active, 0);
+    }
     return r;
 }
 

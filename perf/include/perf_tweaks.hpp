@@ -87,6 +87,9 @@ struct Settings {
     // the other busy workers do not take (perf_ai.hpp); same results. Measured: within noise (the inlined work
     // replaces the wait one for one), so off.
     bool ai_nested_inline = false;
+    // Save files: the numbers formatted by plain integer code instead of the C runtime's printf (perf_save.hpp);
+    // same text, checked against the runtime at install
+    bool save_fast_format = true;
     // Frame rate cap for frames drawn in the middle of a tick (frame smoothing); 0 = the game's own rate (perf_render.hpp)
     int tick_render_fps = 10;
     // Logs how often the engine's frame function runs against the ticks (perf_ui.hpp); measurement only

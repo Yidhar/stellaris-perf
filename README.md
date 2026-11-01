@@ -161,6 +161,17 @@ are off pass straight through to the engine.
   whole range itself; same results, a parallel-for's chunks are independent of each other and of the thread. Measured
   on a late save (36 months, alternating monthly): the daily AI phase 15.58 ms off, 15.54 ms on (medians 14.4 / 14.1,
   90th percentile 27.4 / 26.6), within noise; the work the thread now does itself replaces the wait almost one for one.
+- **Save files formatted without printf** (`save_fast_format`). A save is written as text by one thread while the
+  game waits (about 0.6 s on a late save, half-yearly for the autosave). Every number goes through the engine's
+  `sprintf` / `snprintf` thunks into the C runtime's printf machinery: `CToken(int)` with `"%d"`, `CToken(unsigned)`
+  with `"%u"`, `CWriter::Write(CToken)` with `"%s%lld.%0.5d"` for fixed points, `CToken(CFixedPoint)` with
+  `"%0*lld"` and `"%lld.%s"`; in the sampled profile of the serializing thread the runtime's printf engine is about a
+  quarter of the serialization. The plugin hooks the two thunks and produces those formats (and `"%s"`, `"%lld"`) with
+  plain integer-to-decimal code; every other format goes to the runtime as before. The text is identical: when the
+  plugin loads, each fast format is checked against the runtime on a battery of values (zero, signs, extremes, every
+  padding width) and is only used if every byte and the return value match. Measured on a late save over 72 months
+  with the setting alternating per autosave: the save phase 617 ms off, 572 ms on per autosave (medians 613 / 569),
+  20 million numbers formatted by the fast paths (see [`bench/RESULTS.md`](bench/RESULTS.md)).
 
 - **Frame cap inside ticks** (`tick_render_fps`, default 10). With frame smoothing on, the engine draws a frame from inside
   the simulation whenever its refresh-rate based timer says one is due; on a high-refresh monitor that is up to the
@@ -243,6 +254,7 @@ clones.
 | `ai_parallel_lpt` | `0` | experimental: daily AI update with the countries processed heaviest first; measured no gain |
 | `ai_weight_cache` | `1` | scripted weight factors memoised per (weight, scope) within one daily AI phase |
 | `ai_nested_inline` | `0` | experimental: a parallel-for started inside a country's AI update runs on that thread; measured within noise |
+| `save_fast_format` | `1` | the numbers of a save file formatted by plain integer code instead of the runtime's printf (same text) |
 | `tick_render_fps` | `10` | most frames per second drawn in the middle of a tick (`0` = the game's own rate) |
 | `render_cap_between_ticks` | `1` | the same cap for the frames drawn between ticks, while the simulation runs |
 | `fleet_manager_cache` | `1` | cache fleet military power in the fleet manager window |

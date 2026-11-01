@@ -238,6 +238,28 @@ hooked and a descriptor built inside a country's update gets its task count at +
 phase of a normal day 15.58 ms off, 15.54 ms on (medians 14.43 / 14.07, 90th percentile 27.40 / 26.61, 95th 31.3 /
 32.9): the work the thread now runs itself replaces the wait almost one for one. Kept, off.
 
+## The autosave spike: the serialization, sampled
+
+The half-yearly autosave costs the main thread a `save` phase of 600-670 ms on the late save: `CSaveGameTaskManager::Update`
+(0xA89AD0) waits for the serialization task (on a worker thread; the compression and the write are another task it
+does not wait for) while drawing frames. The serializing thread sampled from outside the game (the plugin flags the
+window in its shared statistics, `sample_thread.py ... save` in the research repository picks the busiest thread; 1,234
+samples of one autosave): `CWriter::WriteTopLevelList` recursing through the serializers; of the time, the C
+runtime's printf engine 22-25 % (every number goes through the engine's `sprintf` / `snprintf` thunks: `CToken(int)`
+`"%d"`, `CToken(unsigned)` `"%u"`, `CWriter::Write(CToken)` `"%s%lld.%0.5d"`, `CToken(CFixedPoint)` `"%0*lld"` and
+`"%lld.%s"`), `CBlob` growth copies 9 % (only the first save of a process grows the buffer; later ones keep it), the
+per-token `CFile::WriteData` path 12 % exclusive, quoted strings with two `ReplaceAll` each 10 %.
+
+**`save_fast_format`.** The two thunks (0xD38AA0 `sprintf`, 0x1B486D0 `snprintf`, both into
+`__stdio_common_vsprintf`) are hooked; the eight formats above plus `"%s"` and `"%lld"` are produced by plain
+integer-to-decimal code with printf's precision and zero-padding rules and snprintf's C99 truncation, everything else
+goes to the runtime unchanged. At install every fast format is compared with the runtime byte for byte on a battery of
+values (8 of 8 match on 4.5.2). 72 months with the setting alternating per autosave
+([`save_fast_format_interleave_72m.json`](data/phases-late-4.5.2/save_fast_format_interleave_72m.json)): the `save`
+phase 617 ms off, 572 ms on per autosave (medians 613 / 569, 6 autosaves each), 20 million numbers through the fast
+paths. What is left in the serialization is the writer itself (the per-token virtual write path and the quoted-string
+escaping), which a hook cannot shorten without reimplementing `CWriter`.
+
 Two runs of the same save cannot be compared save for save: the engine reseeds a loaded game from the clock unless its
 `UseSavedRandom` console variable is set (`stellaris_bench.dll` now sets it), and even with the seed kept two runs of
 `late_base` differ in 70k places of the gamestate after six months (the engine's own threading), which also puts

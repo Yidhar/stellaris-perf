@@ -47,6 +47,9 @@ struct SharedStats {
     uint32_t ai_heavy_active;
     uint32_t ai_heavy_country;  // its index in the CCountryAI array
     uint32_t ai_heavy_pad;
+    // the thread serializing a save (CSaveGameTaskManager::CreateMemoryFiles) and whether it is doing so right now
+    uint32_t save_tid;
+    uint32_t save_active;
 };
 #pragma pack(pop)
 
