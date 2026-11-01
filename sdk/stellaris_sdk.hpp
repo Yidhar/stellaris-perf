@@ -57,6 +57,7 @@ namespace fn {
     inline constexpr uintptr_t CFleet_CalcMilitaryPower = 0xC7F9A0;
     inline constexpr uintptr_t CGameState_HandleTurnTick = 0x251800;
     inline constexpr uintptr_t CHasFlagTrigger_ActualEvaluate = 0x195A7A0;
+    inline constexpr uintptr_t CInGameIdler_SaveGame = 0x934240;
     inline constexpr uintptr_t CInGameIdler_SetGameSpeed = 0x934C50;
     inline constexpr uintptr_t CInGameIdler_SetPaused = 0x935340;
     inline constexpr uintptr_t CModifierNodeBase_Update = 0x238300;

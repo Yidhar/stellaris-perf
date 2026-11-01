@@ -8,12 +8,13 @@
 
 | 部分 | 作用 |
 |---|---|
-| `stellaris_bench.dll` | 修改 DXGI 交换链虚表里 `IDXGISwapChain::Present` 的槽位，用来计帧，并在下一帧于主线程上执行命令。自己的管道是 `\\.\pipe\stellaris_bench`，命令：`status`、`pause 0/1`、`speed 0..5`、`saved_random 0/1`。引擎地址全部来自生成的 SDK（`sdk::fn::CInGameIdler_SetPaused/SetGameSpeed`、`sdk::rt::CInGameIdler_paused/speed`、`sdk::rt::CGameState_date_hours`）。它加载期间还会把引擎的控制台变量 `UseSavedRandom` 置为 1（通过注册它的那段代码找到地址），之后读取的存档会保留自己的 `random_seed` / `random_count`，同一个存档的两次运行模拟出完全相同的游戏，自动存档逐字节一致；引擎默认会在读档时用时钟重新播种，两次运行几天之内就分道扬镳。 |
+| `stellaris_bench.dll` | 修改 DXGI 交换链虚表里 `IDXGISwapChain::Present` 的槽位，用来计帧，并在下一帧于主线程上执行命令。自己的管道是 `\\.\pipe\stellaris_bench`，命令：`status`、`pause 0/1`、`speed 0..5`、`saved_random 0/1`、`save <名字>`（往当前战役文件夹里存一个本地存档，用来比较两种设置写出的字节）。引擎地址全部来自生成的 SDK（`sdk::fn::CInGameIdler_SetPaused/SetGameSpeed/SaveGame`、`sdk::rt::CInGameIdler_paused/speed`、`sdk::rt::CGameState_date_hours`）。它加载期间还会把引擎的控制台变量 `UseSavedRandom` 置为 1（通过注册它的那段代码找到地址），之后读取的存档会保留自己的 `random_seed` / `random_count`，同一个存档的两次运行模拟出完全相同的游戏，自动存档逐字节一致；引擎默认会在读档时用时钟重新播种，两次运行几天之内就分道扬镳。 |
 | `stellaris_perf.dll` 的统计共享内存 | `Local\stellaris_perf_stats_<pid>`（`perf/include/perf_shared.hpp`），只读。内容包括当前生效的设置、`CFleetManagerView::Update` 的调用次数、缓存和节流计数，以及每日 AI 更新里最重国家正在哪个线程上更新（`ai_heavy_*`，给进程外的采样分析器用）。优化 DLL 本身没有任何控制通道，设置仍然只从 `stellaris_perf.ini` 读取。 |
 | `scripts/dllctl.py` | 加载或卸载两个 DLL。加载是远程 `LoadLibraryW`；卸载通过设置 DLL 自己的事件，由 DLL 摘掉钩子、等进行中的调用都结束后自行卸载，从不在外部调用 `FreeLibrary`。 |
 | `scripts/bench_fm.py` | 在一次连续运行里做 A/B，不需要读档。 |
 | `scripts/ab_setting.py` | 在运行中的游戏里对任意 `stellaris_perf.ini` 键做 A/B，ABBA / BAAB 分组，报告每个游戏日的墙钟毫秒和进程 CPU 毫秒，以及配对的 95% 区间。适用于只持续几十天的战斗：每组在 `game_session.py load` 之后运行一次。 |
 | `scripts/game_session.py` | 自动读档：用指定存档重启游戏，加载 DLL，暂停，打开舰队管理器。 |
+| `scripts/save_compare.py` | 检查某个 ini 键不改变存档的字节：在同一个暂停的游戏里分别以该键关、开各存一次（bench DLL 的 `save` 命令），逐字节比较存档里的每个条目。 |
 | `scripts/stellaris_paths.py` | 找到游戏目录（Steam 库）和 Documents 目录，其他脚本都用它。 |
 | `scripts/rule_report.py` | 从游戏内存里为 `logs\stellaris_perf_rules.csv`（`rule_profile=1`）里的规则命名。 |
 | `stress_mod/gen_stress_mod.py` | 生成压力测试 mod（见下）。 |

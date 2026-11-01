@@ -156,7 +156,7 @@ def write_perf_ini(frame_smoothing=-1, opinion_cache=0, rule_cache=0, fleet_mana
                    fleet_manager_reinforce_ms=0, flag_simd=0, flag_expiry_skip=0, profile=0, rule_profile=0,
                    modifier_flush=0, modifier_flush_max=32, fleet_parallel_grain1=0,
                    scope_profile=0, alloc_cache=0, alloc_cache_mb=8, combat_no_copy=0, colony_monthly_batch=0, pop_jobs_single_pass=0,
-                   ai_parallel_lpt=0, ai_weight_cache=0, ai_nested_inline=0, save_fast_format=0, tick_render_fps=0, ui_probe=0,
+                   ai_parallel_lpt=0, ai_weight_cache=0, ai_nested_inline=0, save_fast_format=0, save_fast_writer=0, tick_render_fps=0, ui_probe=0,
                    render_cap_between_ticks=0, phase_profile=0, phase_extra="", phase_callers=""):
     os.makedirs(os.path.dirname(PERF_INI), exist_ok=True)
     with open(PERF_INI, "w") as f:
@@ -183,6 +183,7 @@ def write_perf_ini(frame_smoothing=-1, opinion_cache=0, rule_cache=0, fleet_mana
                 f"ai_weight_cache={ai_weight_cache}\n"
                 f"ai_nested_inline={ai_nested_inline}\n"
                 f"save_fast_format={save_fast_format}\n"
+                f"save_fast_writer={save_fast_writer}\n"
                 f"tick_render_fps={tick_render_fps}\n"
                 f"ui_probe={ui_probe}\n"
                 f"render_cap_between_ticks={render_cap_between_ticks}\n"

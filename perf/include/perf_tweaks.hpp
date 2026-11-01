@@ -90,6 +90,9 @@ struct Settings {
     // Save files: the numbers formatted by plain integer code instead of the C runtime's printf (perf_save.hpp);
     // same text, checked against the runtime at install
     bool save_fast_format = true;
+    // Save files: the text put into the memory file without the engine's per-token temporaries, virtual size query,
+    // append and runtime memcpy (perf_writer.hpp); same bytes
+    bool save_fast_writer = true;
     // Frame rate cap for frames drawn in the middle of a tick (frame smoothing); 0 = the game's own rate (perf_render.hpp)
     int tick_render_fps = 10;
     // Logs how often the engine's frame function runs against the ticks (perf_ui.hpp); measurement only

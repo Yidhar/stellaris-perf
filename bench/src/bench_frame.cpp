@@ -49,6 +49,7 @@ namespace {
 using FnPresent = HRESULT(STDMETHODCALLTYPE*)(IDXGISwapChain* swap_chain, UINT sync_interval, UINT flags);
 using FnSetPaused = void (*)(void* idler, const void* settings);
 using FnSetGameSpeed = void (*)(void* idler, int speed);
+using FnSaveGame = int (*)(void* idler, const void* name, bool cloud, bool overwrite);  // 0 = saving
 
 uintptr_t g_base = 0;
 void** g_present_slot = nullptr;  // IDXGISwapChain::Present in DXGI's swap chain vtable
@@ -150,6 +151,32 @@ bool CallSetGameSpeed(void* idler, int speed) {
     }
 }
 
+// A CString holding a short name in its std::string's small buffer: +0x10 the 16-byte buffer, +0x20 size,
+// +0x28 capacity (15 while the buffer is in use).
+struct SaveName {
+    uint64_t header[2]{};
+    char buf[16]{};
+    uint64_t size = 0;
+    uint64_t capacity = 15;
+};
+static_assert(sizeof(SaveName) == 0x30, "CString layout");
+
+// CInGameIdler::SaveGame(name, cloud, overwrite): a local save into the campaign's folder, written over the next
+// frames (the serialization on a worker, then the compression and the file). The name is at most 15 characters.
+bool CallSaveGame(void* idler, const char* name, int* status) {
+    SaveName s;
+    const size_t n = strlen(name);
+    if (n == 0 || n > 15) return false;
+    memcpy(s.buf, name, n);
+    s.size = n;
+    __try {
+        *status = ((FnSaveGame)(g_base + sdk::fn::CInGameIdler_SaveGame))(idler, &s, false, true);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
 std::string Error(const char* what) { return std::string("{\"ok\":false,\"error\":\"") + what + "\"}"; }
 
 uint8_t* FindUseSavedRandom(uintptr_t base) {
@@ -181,6 +208,20 @@ std::string Run(const std::string& line) {
         if (!idler || !GameState()) return Error("not in game");
         const bool ok = !strcmp(cmd, "pause") ? CallSetPaused(idler, arg != 0) : CallSetGameSpeed(idler, arg);
         if (!ok) return Error("exception in the engine call");
+        return Status();
+    }
+    if (!strcmp(cmd, "save")) {
+        char name[32] = {};
+        if (sscanf(line.c_str(), "%31s %31s", cmd, name) < 2) return Error("missing argument");
+        void* idler = Idler();
+        if (!idler || !GameState()) return Error("not in game");
+        int status = -1;
+        if (!CallSaveGame(idler, name, &status)) return Error("the name is 1 to 15 characters, or the engine call raised");
+        if (status != 0) {
+            char what[64];
+            snprintf(what, sizeof what, "the game refused the save (status %d)", status);
+            return Error(what);
+        }
         return Status();
     }
     return Error("unknown command");

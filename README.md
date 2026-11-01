@@ -172,6 +172,20 @@ are off pass straight through to the engine.
   padding width) and is only used if every byte and the return value match. Measured on a late save over 72 months
   with the setting alternating per autosave: the save phase 617 ms off, 572 ms on per autosave (medians 613 / 569),
   20 million numbers formatted by the fast paths (see [`bench/RESULTS.md`](bench/RESULTS.md)).
+- **Save files written without the per-token machinery** (`save_fast_writer`). Each piece of the text (indentation,
+  key, `=`, value, newline) becomes a temporary `CToken` (a copy into a 256-byte hybrid array with a grow check), is
+  written through `CWriter::Write(CToken)` as a C string (`strlen`), and lands in `CMemoryFile::WriteData`, which asks
+  the file its size through a virtual call and calls `CBlob::Append`, which calls the grow check and the runtime's
+  `memcpy`, for one to a few bytes each time: 31 million such writes per late save, the indentation one of them per
+  tab. A quoted string is first copied into a `CString` and scanned twice for the characters to escape. In the sampled
+  profile that machinery, not the formatting, is the larger half of the serialization. The plugin hooks five
+  functions: `WriteData` appends in place when the blob has room; a token, a key and the indentation are written
+  straight from the engine's own token table, the indentation as one run of tabs; a quoted string without a quote or
+  backslash in it is written with its quotes in one piece (the engine's escaping path otherwise). Binary writers and
+  files that are not plain memory files keep the engine's path. The bytes are the same: from one paused late game,
+  saves with the setting off and on are identical, 100.6 MB of gamestate (`bench/scripts/save_compare.py`). Measured
+  over 72 months with the setting alternating per autosave: the save phase 677 ms off, 375 ms on per autosave (medians
+  669 / 361), the autosave day's wall time 1543 ms to 1245 ms.
 
 - **Frame cap inside ticks** (`tick_render_fps`, default 10). With frame smoothing on, the engine draws a frame from inside
   the simulation whenever its refresh-rate based timer says one is due; on a high-refresh monitor that is up to the
@@ -255,6 +269,7 @@ clones.
 | `ai_weight_cache` | `1` | scripted weight factors memoised per (weight, scope) within one daily AI phase |
 | `ai_nested_inline` | `0` | experimental: a parallel-for started inside a country's AI update runs on that thread; measured within noise |
 | `save_fast_format` | `1` | the numbers of a save file formatted by plain integer code instead of the runtime's printf (same text) |
+| `save_fast_writer` | `1` | the text of a save file put into the memory file without the engine's per-token temporaries, virtual size query, append and runtime memcpy (same bytes) |
 | `tick_render_fps` | `10` | most frames per second drawn in the middle of a tick (`0` = the game's own rate) |
 | `render_cap_between_ticks` | `1` | the same cap for the frames drawn between ticks, while the simulation runs |
 | `fleet_manager_cache` | `1` | cache fleet military power in the fleet manager window |

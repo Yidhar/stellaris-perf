@@ -8,6 +8,7 @@
 #include "perf_ai.hpp"
 #include "perf_weight.hpp"
 #include "perf_save.hpp"
+#include "perf_writer.hpp"
 #include "perf_render.hpp"
 #include "perf_ui.hpp"
 #include "stellaris_sdk.hpp"
@@ -1458,6 +1459,7 @@ bool Install(uintptr_t base) {
         ai::Install(base);
         weight::Install(base);
         save::Install(base);
+        writer::Install(base);
         render::Install(base);
         ui::Install(base);
         phase::Install(base);
@@ -1527,6 +1529,7 @@ void Apply(const Settings& s) {
     ai::SetNestedInline(s.ai_nested_inline);
     weight::SetEnabled(s.ai_weight_cache);
     save::SetEnabled(s.save_fast_format);
+    writer::SetEnabled(s.save_fast_writer);
     render::SetFps(s.tick_render_fps);
     ui::SetProbe(s.ui_probe);
     ui::SetCapAll(s.render_cap_between_ticks);
@@ -1688,7 +1691,7 @@ std::string StatsLine() {
            one("flag_simd(hits=static misses=dynamic bypass=unreadable)", g_flag_stats, g_flag_mode.load() != 0) +
            " mismatches=" + std::to_string(g_flag_mismatch.load()) + " | " +
            one("flag_expiry_skip(hits=skipped)", g_expiry_stats, g_expiry_skip.load()) +
-           " | tick_render_fps=" + (render::Installed() ? std::to_string(render::Dropped()) + " dropped / " + std::to_string(render::Passed()) + " drawn" : std::string("unavailable")) + " | combat_no_copy=" + (combat::Patched() ? "on" : (combat::Installed() ? "off" : "unavailable")) + " | " + colony::Stats() + " | " + jobs::Stats() + " | " + ai::Stats() + " | " + weight::Stats() + " | " + save::Stats() + " | " + AllocStats() + " | " + phase::Summary() + " | " + FlushStats() + " | " + ScopeStats() +
+           " | tick_render_fps=" + (render::Installed() ? std::to_string(render::Dropped()) + " dropped / " + std::to_string(render::Passed()) + " drawn" : std::string("unavailable")) + " | combat_no_copy=" + (combat::Patched() ? "on" : (combat::Installed() ? "off" : "unavailable")) + " | " + colony::Stats() + " | " + jobs::Stats() + " | " + ai::Stats() + " | " + weight::Stats() + " | " + save::Stats() + " | " + writer::Stats() + " | " + AllocStats() + " | " + phase::Summary() + " | " + FlushStats() + " | " + ScopeStats() +
            " | gen=" + std::to_string(g_gen.load()) + prof;
 }
 

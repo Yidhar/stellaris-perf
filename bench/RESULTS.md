@@ -257,8 +257,28 @@ goes to the runtime unchanged. At install every fast format is compared with the
 values (8 of 8 match on 4.5.2). 72 months with the setting alternating per autosave
 ([`save_fast_format_interleave_72m.json`](data/phases-late-4.5.2/save_fast_format_interleave_72m.json)): the `save`
 phase 617 ms off, 572 ms on per autosave (medians 613 / 569, 6 autosaves each), 20 million numbers through the fast
-paths. What is left in the serialization is the writer itself (the per-token virtual write path and the quoted-string
-escaping), which a hook cannot shorten without reimplementing `CWriter`.
+paths. What was left in the serialization was the writer itself: next.
+
+**`save_fast_writer`.** The writer's own machinery, reversed on the Windows build: every piece of text (indentation,
+key, `=`, value, newline) becomes a temporary `CToken` (the token table's string copied into a 256-byte hybrid array
+after a grow check; `CWriter::WriteToken` 0x16AA50, `WriteIndent` 0x1BB4510 which writes the tab token `depth` times,
+`Write(CString)` 0x1BB57F0 for keys), goes through `CWriter::Write(CToken)` 0x1BB46D0, which in text mode is
+`CFile::Write(const char*)` (strlen, then slot 9), and lands in `CMemoryFile::WriteData` 0x1B49F40, which asks the file
+its size through slot 16, calls `CBlob::Append` 0x1B4B6A0, which calls `Reserve` 0x16B140 and the runtime's memcpy, then
+advances the position: 31 million such writes of a few bytes per late save. `CWriter::WriteString` 0x1BB3FF0 copies a
+quoted string into a `CString` and runs two `ReplaceAll` (a memchr scan each) before writing it between two quote writes.
+Five hooks: `WriteData` appends in place when the file is a memory file over a blob with room (position at the end,
+capacity enough; the engine's path otherwise); a token, a key and the indentation are written straight from the engine's
+token table through slot 9 with the known length (the table's strings come from C strings), the indentation as one run
+of tabs; a quoted string with no quote or backslash is written with its quotes in one piece, with an escape it takes the
+engine's path. Binary writers and files whose slot 6 is not the plain `CFile::Write(const char*)` keep the engine's
+path. Bytes checked from one paused game (`save_compare.py`, the bench DLL's new `save` command): off and on identical,
+gamestate 100,635,333 bytes, meta 1,005. 72 months with the setting alternating per autosave, `save_fast_format` on in
+both arms ([`save_fast_writer_interleave_72m.json`](data/phases-late-4.5.2/save_fast_writer_interleave_72m.json)): the
+`save` phase 677 ms off, 375 ms on per autosave (medians 669 / 361, 6 autosaves each), the autosave day's wall time
+1543 ms to 1245 ms; per autosave 31 million appends, 14 million tokens, 7 million indentations, 4 million keys and
+1 million quoted strings through the fast paths. What is left: the number tokens still each build a temporary `CToken`
+before `Write(CToken)`, and the recursion of `WriteTopLevelList` itself.
 
 Two runs of the same save cannot be compared save for save: the engine reseeds a loaded game from the clock unless its
 `UseSavedRandom` console variable is set (`stellaris_bench.dll` now sets it), and even with the seed kept two runs of

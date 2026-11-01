@@ -25,6 +25,7 @@ add_library(stellaris_perf SHARED
     perf/src/perf_ai.cpp
     perf/src/perf_weight.cpp
     perf/src/perf_save.cpp
+    perf/src/perf_writer.cpp
     perf/src/perf_render.cpp
     perf/src/perf_ui.cpp
     perf/src/perf_phase.cpp

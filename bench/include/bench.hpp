@@ -25,6 +25,8 @@ void Uninstall();
 //   pause <0|1>       CInGameIdler::SetPaused
 //   speed <0..5>      CInGameIdler::SetGameSpeed
 //   saved_random <0|1>  the UseSavedRandom console variable (1 while the DLL is loaded unless changed here)
+//   save <name>       CInGameIdler::SaveGame: a local save <name>.sav (1 to 15 characters) into the campaign's
+//                     folder, overwriting; written over the next frames
 // "frames" is the Present count since the DLL loaded, "t" the QueryPerformanceCounter time in
 // seconds when the command ran.
 std::string Execute(const std::string& line, unsigned timeout_ms);
