@@ -8,7 +8,7 @@
 
 | 部分 | 作用 |
 |---|---|
-| `stellaris_bench.dll` | 修改 DXGI 交换链虚表里 `IDXGISwapChain::Present` 的槽位，用来计帧，并在下一帧于主线程上执行命令。自己的管道是 `\\.\pipe\stellaris_bench`，命令：`status`、`pause 0/1`、`speed 0..5`。引擎地址全部来自生成的 SDK（`sdk::fn::CInGameIdler_SetPaused/SetGameSpeed`、`sdk::rt::CInGameIdler_paused/speed`、`sdk::rt::CGameState_date_hours`）。 |
+| `stellaris_bench.dll` | 修改 DXGI 交换链虚表里 `IDXGISwapChain::Present` 的槽位，用来计帧，并在下一帧于主线程上执行命令。自己的管道是 `\\.\pipe\stellaris_bench`，命令：`status`、`pause 0/1`、`speed 0..5`、`saved_random 0/1`。引擎地址全部来自生成的 SDK（`sdk::fn::CInGameIdler_SetPaused/SetGameSpeed`、`sdk::rt::CInGameIdler_paused/speed`、`sdk::rt::CGameState_date_hours`）。它加载期间还会把引擎的控制台变量 `UseSavedRandom` 置为 1（通过注册它的那段代码找到地址），之后读取的存档会保留自己的 `random_seed` / `random_count`，同一个存档的两次运行模拟出完全相同的游戏，自动存档逐字节一致；引擎默认会在读档时用时钟重新播种，两次运行几天之内就分道扬镳。 |
 | `stellaris_perf.dll` 的统计共享内存 | `Local\stellaris_perf_stats_<pid>`（`perf/include/perf_shared.hpp`），只读。内容包括当前生效的设置、`CFleetManagerView::Update` 的调用次数、缓存和节流计数。优化 DLL 本身没有任何控制通道，设置仍然只从 `stellaris_perf.ini` 读取。 |
 | `scripts/dllctl.py` | 加载或卸载两个 DLL。加载是远程 `LoadLibraryW`；卸载通过设置 DLL 自己的事件，由 DLL 摘掉钩子、等进行中的调用都结束后自行卸载，从不在外部调用 `FreeLibrary`。 |
 | `scripts/bench_fm.py` | 在一次连续运行里做 A/B，不需要读档。 |

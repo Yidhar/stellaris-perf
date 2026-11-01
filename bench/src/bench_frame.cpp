@@ -94,6 +94,13 @@ bool ReadU32(uintptr_t addr, uint32_t* out) {
 void* Idler() { return ReadPtr(g_base + sdk::glob::g_CurrentInGameIdler); }
 void* GameState() { return ReadPtr(g_base + sdk::glob::g_CurrentGameState); }
 
+// The engine applies a save's random_seed / random_count only while its console variable UseSavedRandom is set;
+// otherwise a loaded game is reseeded from the clock and two runs of the same save diverge within days. The variable's
+// address is read out of the thunk that registers it (lea r8, ""; lea rdx, [the bool]; lea rcx, "UseSavedRandom";
+// jmp), which must look exactly like that.
+constexpr uintptr_t kRvaRegisterUseSavedRandom = 0x4F10;
+uint8_t* g_use_saved_random = nullptr;
+
 std::string Status() {
     void* idler = Idler();
     void* state = GameState();
@@ -103,9 +110,10 @@ std::string Status() {
                          ReadU32((uintptr_t)idler + sdk::rt::CInGameIdler_paused, &paused_word);
     char buf[256];
     snprintf(buf, sizeof(buf),
-             "{\"ok\":true,\"in_game\":%s,\"hours\":%u,\"day\":%u,\"paused\":%s,\"speed\":%u,\"frames\":%llu,\"t\":%.6f}",
+             "{\"ok\":true,\"in_game\":%s,\"hours\":%u,\"day\":%u,\"paused\":%s,\"speed\":%u,\"frames\":%llu,\"t\":%.6f,"
+             "\"saved_random\":%s}",
              in_game ? "true" : "false", hours, hours / 24, (paused_word & 0xFF) ? "true" : "false", speed,
-             (unsigned long long)g_frames.load(), Now());
+             (unsigned long long)g_frames.load(), Now(), g_use_saved_random && *g_use_saved_random ? "true" : "false");
     return buf;
 }
 
@@ -144,12 +152,29 @@ bool CallSetGameSpeed(void* idler, int speed) {
 
 std::string Error(const char* what) { return std::string("{\"ok\":false,\"error\":\"") + what + "\"}"; }
 
+uint8_t* FindUseSavedRandom(uintptr_t base) {
+    const uint8_t* p = (const uint8_t*)(base + kRvaRegisterUseSavedRandom);
+    if (!(p[0] == 0x4C && p[1] == 0x8D && p[2] == 0x05 && p[7] == 0x48 && p[8] == 0x8D && p[9] == 0x15 && p[14] == 0x48 &&
+          p[15] == 0x8D && p[16] == 0x0D && p[21] == 0xE9)) {
+        return nullptr;
+    }
+    const char* name = (const char*)(p + 21 + *(const int32_t*)(p + 17));
+    if (strcmp(name, "UseSavedRandom") != 0) return nullptr;
+    return (uint8_t*)(p + 14 + *(const int32_t*)(p + 10));
+}
+
 std::string Run(const std::string& line) {
     char cmd[32] = {};
     int arg = 0;
     const int n = sscanf(line.c_str(), "%31s %d", cmd, &arg);
     if (n < 1) return Error("empty command");
     if (!strcmp(cmd, "status")) return Status();
+    if (!strcmp(cmd, "saved_random")) {
+        if (n < 2) return Error("missing argument");
+        if (!g_use_saved_random) return Error("UseSavedRandom not found in this exe");
+        *g_use_saved_random = arg ? 1 : 0;
+        return Status();
+    }
     if (!strcmp(cmd, "pause") || !strcmp(cmd, "speed")) {
         if (n < 2) return Error("missing argument");
         void* idler = Idler();
@@ -261,6 +286,13 @@ bool Install(uintptr_t base) {
     }
     g_present_slot = slot;
     Log("patched IDXGISwapChain::Present slot %p (was %p)", (void*)slot, (void*)g_orig_present);
+    g_use_saved_random = FindUseSavedRandom(base);
+    if (g_use_saved_random) {
+        *g_use_saved_random = 1;
+        Log("UseSavedRandom set: a save loaded from now on keeps its random seed, so runs of it repeat exactly");
+    } else {
+        Log("the UseSavedRandom console variable was not found; runs of the same save will diverge");
+    }
     return true;
 }
 
