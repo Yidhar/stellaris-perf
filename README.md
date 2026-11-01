@@ -102,8 +102,14 @@ are off pass straight through to the engine.
   the simulation whenever its refresh-rate based timer says one is due; on a high-refresh monitor that is up to the
   monitor's rate, and every such frame walks and draws the whole GUI window tree on the simulation thread. The plugin
   hooks the engine's `RenderFrame` (all 35 call sites, found by their byte pattern, must call the same function) and
-  drops the calls made inside a tick that come closer together than 1 / `tick_render_fps` seconds. Frames between ticks
-  are not touched; `0` leaves the game's own rate. Display only.
+  drops the calls made inside a tick that come closer together than 1 / `tick_render_fps` seconds; `0` leaves the game's
+  own rate. Display only.
+
+- **The same cap between ticks** (`render_cap_between_ticks`, default on). The engine also calls `RenderFrame` from its
+  main loop between ticks, and those calls were about half of all `RenderFrame` time. With this on they follow the same
+  cap, but only while the simulation is running (a tick ended in the last 250 ms); paused, in a menu or loading, nothing is
+  capped. (Dropping the draw step of each loop iteration instead made the game slower: the engine's own frame logic then
+  redid the GUI update more often.)
 
 ### Optional
 
@@ -160,6 +166,7 @@ clones.
 | `alloc_cache_mb` | `8` | most memory each thread keeps cached (MB, `0` = off) |
 | `combat_no_copy` | `1` | share the combat participants table's object instead of copying it per ship |
 | `tick_render_fps` | `10` | most frames per second drawn in the middle of a tick (`0` = the game's own rate) |
+| `render_cap_between_ticks` | `1` | the same cap for the frames drawn between ticks, while the simulation runs |
 | `fleet_manager_cache` | `1` | cache fleet military power in the fleet manager window |
 | `fleet_manager_reinforce_ms` | `1000` | minimum ms between reinforcement recalculations (`0` = the game's own throttle) |
 | `flag_simd` | `1` | `0` engine scan, `1` SSE2 scan, `2` verify |

@@ -51,6 +51,22 @@ costs tens of milliseconds late in the game), so the cap only binds for the fram
 5 gave -13.1 % (-19.6 .. -6.1): both are compatible with the roughly 5 % the profile predicts, the second one is
 probably a lucky draw. The default is 10.
 
+## Frame cap between ticks (`render_cap_between_ticks`)
+
+At full speed in the late-game save the engine's frame function (RVA 0x332EF0: input, GUI update, tick, GUI draw) runs
+about 20 times a second, two ticks each; the ticks take 75 to 80 % of its time and the GUI update and draw the rest.
+`RenderFrame` is also called from the main loop between ticks, which `tick_render_fps` did not cover.
+
+| Change | Save | Wall time | Process CPU |
+|---|---|---|---|
+| Cap those calls too, while the simulation runs (8 groups, 6 days per segment, 40 days warm-up) | late game | **-9.9 %** (95 % CI -15.1 .. -4.3) | -12.9 % (-26.1 .. +2.6), inconclusive |
+| the same, first 8-group run (30 days warm-up, build without the "simulation is running" condition) | late game | -5.5 % (-12.7 .. +2.3) | -2.6 % (-18.8 .. +16.7) |
+
+Main-thread samples (60 s each, two repeats): `RenderFrame` 14.4 / 15.1 % without it, 6.0 / 6.4 % with it.
+Tried and rejected: dropping the draw step (RVA 0x334160) of each loop iteration at 10 fps. The game got slower
+(231 to about 280 ms per day): the engine then ran the GUI update (RVA 0x9293a0, 0x1c0a7a0, 0x1A4D610) and `RenderFrame`
+more than twice as often (their samples went from 6.3 / 3.4 / 2.7 % to 15.5 / 8.7 / 7.5 %).
+
 ## Tried, no measurable effect (not shipped)
 
 | Idea | Save | Wall time | Process CPU |

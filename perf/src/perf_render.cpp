@@ -1,5 +1,6 @@
 #include "perf_render.hpp"
 #include "perf_tweaks.hpp"
+#include "perf_ui.hpp"
 #include "MinHook.h"
 
 #include <windows.h>
@@ -42,7 +43,7 @@ bool IsSite(const uint8_t* p, size_t* len) {
 
 void RenderDetour(void* a, void* b, void* c, void* d) {
     const int fps = g_fps.load(std::memory_order_relaxed);
-    if (fps > 0 && g_in_tick.load(std::memory_order_relaxed) > 0) {
+    if (fps > 0 && (g_in_tick.load(std::memory_order_relaxed) > 0 || ui::CapAll())) {
         // the engine's own timer stays "due" while frames are dropped, so this is asked at every check: rdtsc, not QPC
         const uint64_t now = __rdtsc();
         if ((double)(now - g_last) < g_tsc_per_sec / fps) {

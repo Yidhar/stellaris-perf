@@ -27,11 +27,13 @@ k32.OpenProcess.restype = w.HANDLE
 
 KEYS = ("frame_smoothing", "opinion_cache", "rule_cache", "fleet_manager_cache", "fleet_manager_reinforce_ms", "flag_simd",
         "flag_expiry_skip", "profile", "rule_profile", "modifier_flush", "modifier_flush_max", "fleet_parallel_grain1",
-        "scope_profile", "alloc_cache", "alloc_cache_mb", "combat_no_copy", "tick_render_fps")
+        "scope_profile", "alloc_cache", "alloc_cache_mb", "combat_no_copy", "tick_render_fps",
+        "ui_probe", "render_cap_between_ticks")
 DEFAULTS = {"frame_smoothing": -1, "opinion_cache": 0, "rule_cache": 0, "fleet_manager_cache": 1,
             "fleet_manager_reinforce_ms": 1000, "flag_simd": 1, "flag_expiry_skip": 1, "profile": 0, "rule_profile": 0,
             "modifier_flush": 0, "modifier_flush_max": 32, "fleet_parallel_grain1": 1, "scope_profile": 0, "alloc_cache": 1,
-            "alloc_cache_mb": 8, "combat_no_copy": 1, "tick_render_fps": 10}
+            "alloc_cache_mb": 8, "combat_no_copy": 1, "tick_render_fps": 10,
+            "ui_probe": 0, "render_cap_between_ticks": 1}
 
 
 def parse(pairs):

@@ -21,6 +21,7 @@ add_library(stellaris_perf SHARED
     perf/src/perf_alloc.cpp
     perf/src/perf_combat.cpp
     perf/src/perf_render.cpp
+    perf/src/perf_ui.cpp
 )
 target_include_directories(stellaris_perf PRIVATE perf/include sdk)
 target_link_libraries(stellaris_perf PRIVATE minhook)

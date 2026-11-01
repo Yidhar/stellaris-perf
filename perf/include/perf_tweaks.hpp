@@ -57,6 +57,10 @@ struct Settings {
     bool combat_no_copy = true;
     // Frame rate cap for frames drawn in the middle of a tick (frame smoothing); 0 = the game's own rate (perf_render.hpp)
     int tick_render_fps = 10;
+    // Logs how often the engine's frame function runs against the ticks (perf_ui.hpp); measurement only
+    bool ui_probe = false;
+    // Also apply the tick_render_fps cap to the frames drawn between ticks while the simulation runs (perf_ui.hpp)
+    bool render_cap_between_ticks = true;
     // Profile of scope resolution (CEventTarget::GetScope, CEventScope::Copy) per game day
     bool scope_profile = false;
     int modifier_flush_max = 32;  // largest dirty set taking the serial path

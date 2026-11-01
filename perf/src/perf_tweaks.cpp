@@ -3,6 +3,7 @@
 #include "perf_alloc.hpp"
 #include "perf_combat.hpp"
 #include "perf_render.hpp"
+#include "perf_ui.hpp"
 #include "stellaris_sdk.hpp"
 #include "MinHook.h"
 
@@ -397,9 +398,11 @@ void HandleTurnTickDetour(void* game_state, void* commands) {
     g_main_tid.store(GetCurrentThreadId(), std::memory_order_relaxed);
     combat::Sync();  // the worker threads are idle between ticks: the only safe moment to change code they run
     render::TickBegin();
+    ui::TickBegin();
     const uint64_t t0 = __rdtsc();
     g_orig_turn_tick(game_state, commands);
     render::TickEnd();
+    ui::TickEnd();
     g_tick_cycles.fetch_add(__rdtsc() - t0, std::memory_order_relaxed);
     g_ticks_done.fetch_add(1);
     g_in_tick.fetch_sub(1);
@@ -1401,6 +1404,7 @@ bool Install(uintptr_t base) {
         alloc::Install(base);
         combat::Install(base);
         render::Install(base);
+        ui::Install(base);
     }
     return ok;
 }
@@ -1462,6 +1466,8 @@ void Apply(const Settings& s) {
     alloc::Configure(s.alloc_cache, s.alloc_cache_mb);
     combat::Want(s.combat_no_copy);
     render::SetFps(s.tick_render_fps);
+    ui::SetProbe(s.ui_probe);
+    ui::SetCapAll(s.render_cap_between_ticks);
     if (s.scope_profile && !g_scope_profile.load()) {
         for (int a = 0; a < 2; ++a)
             for (int b = 0; b < 2; ++b) {
