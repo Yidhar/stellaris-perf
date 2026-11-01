@@ -179,6 +179,24 @@ monthly update (-7 to -12 %), about -1 ms per day averaged; `1` alone is within 
 means, -10 to -42 ms medians). 124k forced refreshes skipped, 1,051 flushes held and 31k reads of a frozen node over
 the 72 months, no mismatch reported by the engine.
 
+**The second pop-job pass (`pop_jobs_single_pass`).** `NColonyUpdate::MonthlyUpdate` (0xE3BFA0) calls
+`NPlanetJobs::UpdatePopJobs(date, span of all colonies)` (0xB25DF0) twice in a row with the same arguments (calls at
+0xE3C189 and 0xE3C1AE; the cheat-mode daily variant 0xE3BF20 has the same pair). Per month start on the late save
+(`phase_callers=0xB25DF0`): the first call 64 ms, the second 32 ms, inclusive of their parallel weight phases; the
+daily single-colony path (0xB264A0, colonies whose buildings changed) 3-4 calls a day of 0.3 ms. What the second pass
+does, read out of `AssignPopsToJobs`: it rebuilds everything from the first pass's output. The first pass's promotion
+tail moves a promoted pop group into the job's category and re-adds it to the job (`CPopJob::AddPopGroup`), so
+promoted pops are not left jobless; what the second pass can change is what the first's modifier invalidations (job
+checksums -> `UpdateEconomicResources` -> `CCountry::InvalidateModifier`) move in job slots and workforce, and the job
+weights that read the assignment (11 of the 365 vanilla jobs: the four zoo animals' `num_assigned_jobs`, healthcare's
+and five others' `free_amenities`, one `free_jobs`). The engine's own daily recompute is a single pass. The option
+skips the second call (both pairs); the month's assignment is then the first pass's, one iteration behind the engine's
+where those inputs changed, until the next recompute. Measured in one run with the setting alternating from month start
+to month start (36 month starts,
+[`pop_jobs_single_pass_interleave_36m.json`](data/phases-late-4.5.2/pop_jobs_single_pass_interleave_36m.json)): monthly
+update 346.0 ms off, 309.5 ms on (medians 335.8 / 298.0), -36 ms or -11 % of the month-start monthly update, about
+-1.2 ms per day averaged; 18 second passes skipped, no error.
+
 Two runs of the same save cannot be compared save for save: the engine reseeds a loaded game from the clock unless its
 `UseSavedRandom` console variable is set (`stellaris_bench.dll` now sets it), and even with the seed kept two runs of
 `late_base` differ in 70k places of the gamestate after six months (the engine's own threading), which also puts

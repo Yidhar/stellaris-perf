@@ -21,6 +21,7 @@ add_library(stellaris_perf SHARED
     perf/src/perf_alloc.cpp
     perf/src/perf_combat.cpp
     perf/src/perf_colony.cpp
+    perf/src/perf_jobs.cpp
     perf/src/perf_render.cpp
     perf/src/perf_ui.cpp
     perf/src/perf_phase.cpp

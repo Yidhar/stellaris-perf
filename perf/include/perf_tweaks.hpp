@@ -59,6 +59,9 @@ struct Settings {
     // Colony monthly pass: 1 = the forced modifier refreshes done once at the end of the pass and the manager's flush
     // held during it, 2 = also the colony's node frozen during its pass (perf_colony.hpp); 0 = off
     int colony_monthly_batch = 2;
+    // Monthly pop-job assignment once instead of twice: the engine's second UpdatePopJobs call, one more iteration
+    // over the first's result, is skipped (perf_jobs.hpp)
+    bool pop_jobs_single_pass = true;
     // Frame rate cap for frames drawn in the middle of a tick (frame smoothing); 0 = the game's own rate (perf_render.hpp)
     int tick_render_fps = 10;
     // Logs how often the engine's frame function runs against the ticks (perf_ui.hpp); measurement only

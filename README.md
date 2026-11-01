@@ -115,6 +115,18 @@ are off pass straight through to the engine.
   event reading the cached values sees the pre-pass ones. Measured on a late save, the month-start monthly update in
   two runs of 36 and 72 month starts: `0` 370 / 397 ms, `1` 358 / 387 ms, `2` 345 / 349 ms (see
   [`bench/RESULTS.md`](bench/RESULTS.md)).
+- **Monthly pop-job assignment once instead of twice** (`pop_jobs_single_pass`). `NColonyUpdate::MonthlyUpdate`
+  calls `NPlanetJobs::UpdatePopJobs` over all colonies twice in a row with the same arguments: the second call is one
+  more fixed-point iteration over what the first changed (pop groups the first collapsed or promoted keep the jobs
+  they were given; the modifiers the first invalidated, through job checksums reaching the country's economy, are
+  rebuilt and can move job slots and workforce; the few job weights that read the assignment, such as the zoo animals'
+  `num_assigned_jobs` and healthcare's `free_amenities`, see the new one). The engine's own daily recompute of a colony
+  whose buildings changed is a single pass. With this on the second monthly call is skipped (and the second of the
+  pair in the cheat-mode daily variant): the month's assignment is the first pass's, and the next recompute picks up
+  whatever the second would have changed. Deterministic, so two clients that both run it agree. On a late save the
+  first pass takes 64 ms of a month start and the second 32 ms (`phase_callers`); measured in one run with the
+  setting alternating from month start to month start (36 month starts), the month-start monthly update is 346 ms
+  off and 310 ms on (medians 336 / 298; see [`bench/RESULTS.md`](bench/RESULTS.md)).
 
 - **Frame cap inside ticks** (`tick_render_fps`, default 10). With frame smoothing on, the engine draws a frame from inside
   the simulation whenever its refresh-rate based timer says one is due; on a high-refresh monitor that is up to the
@@ -193,6 +205,7 @@ clones.
 | `alloc_cache_mb` | `8` | most memory each thread keeps cached (MB, `0` = off) |
 | `combat_no_copy` | `1` | share the combat participants table's object instead of copying it per ship |
 | `colony_monthly_batch` | `2` | colony monthly pass: `1` forced refreshes once at the end, flush held; `2` also the colony's node frozen during its pass |
+| `pop_jobs_single_pass` | `1` | monthly pop-job assignment once instead of twice (the engine's second call is one more iteration over the first's result) |
 | `tick_render_fps` | `10` | most frames per second drawn in the middle of a tick (`0` = the game's own rate) |
 | `render_cap_between_ticks` | `1` | the same cap for the frames drawn between ticks, while the simulation runs |
 | `fleet_manager_cache` | `1` | cache fleet military power in the fleet manager window |
