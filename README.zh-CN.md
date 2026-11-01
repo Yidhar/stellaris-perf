@@ -77,7 +77,7 @@
 - `profile` 对已挂钩且缓存关闭的函数，按主线程和其他线程分开，统计每个游戏日里每次调用的耗时（写入日志）。
 - `rule_profile` 每 30 秒左右把每条游戏规则、每条路径（引擎、绕过、命中、未命中）的调用数和周期数写入 `logs\stellaris_perf_rules.csv`。
 - `scope_profile` 统计事件目标解析（`CEventTarget::GetScope`、动态的 `name@target` flag、作用域拷贝）的耗时。
-- `phase_profile` 在引擎各阶段的入口用 rdtsc 计时，按游戏日记录：tick 及其各部分（微更新、日更、月更、年更、含等待工作线程的 AI 更新、自动存档）、tick 内和 tick 之间画的帧、帧函数自己的 GUI 更新和绘制，每个阶段记的是独占时间。每个游戏日一条记录写到 `logs\stellaris_perf_phases.json`；`python bench\scripts\phase_report.py` 按日子分组（普通日、月初、1 月 1 日、7 月 1 日）打印每天的毫秒数和占墙钟的比例，月初和自动存档的尖峰不再被平均掉。`phase_extra`（`0xRVA[=name], ...`）可以在游戏运行中把可执行文件里的任意函数加进计时（只接受函数起点），用来逐层拆开某个阶段，不用重新编译。
+- `phase_profile` 在引擎各阶段的入口用 rdtsc 计时，按游戏日记录：tick 及其各部分（微更新、日更、月更、年更、含等待工作线程的 AI 更新、自动存档）、tick 内和 tick 之间画的帧、帧函数自己的 GUI 更新和绘制，每个阶段记的是独占时间。每个游戏日一条记录写到 `logs\stellaris_perf_phases.json`；`python bench\scripts\phase_report.py` 按日子分组（普通日、月初、1 月 1 日、7 月 1 日）打印每天的毫秒数和占墙钟的比例，月初和自动存档的尖峰不再被平均掉。`phase_extra`（`0xRVA[=name], ...`）可以在游戏运行中把可执行文件里的任意函数加进计时（只接受函数起点），用来逐层拆开某个阶段，不用重新编译；`phase_callers`（某个已计时函数的 `0xRVA`）按调用点记录它的次数和耗时，普通日和月初分开。
 - 当前设置和计数还会发布到一块只读的共享内存（`Local\stellaris_perf_stats_<pid>`，结构见 `perf/include/perf_shared.hpp`），基准脚本从这里读取。
 
 ### 研究过，没有发布

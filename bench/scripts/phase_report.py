@@ -70,6 +70,17 @@ def main():
                 extra = f"   {c:7.1f} calls/day, {ph[m] / c * 1000:7.0f} us each" if c else ""
                 print(f"    {m:<16} {ph[m]:8.1f} ms/day {100 * ph[m] / mean_wall:5.1f}%{extra}")
         print(f"  {'unaccounted':<16} {mean_wall - acc:8.1f} ms/day {100 * (mean_wall - acc) / mean_wall:5.1f}%  (main loop outside the frame function, waits between ticks)")
+    if "callers" in J:
+        c = J["callers"]
+        print(f"\n== call sites of {c['of']} (phase_callers), totals over the whole recording; sites given as RVAs of the return address"
+              + (f"; {c['overflow']} calls did not fit the table" if c.get("overflow") else ""))
+        for kind in ("normal", "month"):
+            rows = sorted(c.get(kind, []), key=lambda r: -r[2])
+            tot_c = sum(r[1] for r in rows) or 1
+            tot_t = sum(r[2] for r in rows) or 1
+            print(f"  {kind} days: {tot_c} calls, {tot_t * ms:.1f} ms in total")
+            for site, calls, cyc in rows[:25]:
+                print(f"    site 0x{site:X}  {calls:8d} calls {100 * calls / tot_c:5.1f}%  {cyc * ms:8.1f} ms {100 * cyc / tot_t:5.1f}%  {cyc / calls * ms * 1000:7.2f} us each")
     return 0
 
 

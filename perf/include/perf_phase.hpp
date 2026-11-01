@@ -44,6 +44,9 @@ bool Install(uintptr_t base);
 void SetEnabled(bool on);
 bool Enabled();
 void SetExtra(const char* spec);
+// phase_callers = "0xRVA": for that timed function (a fixed phase's or an extra one), count its calls and cycles per
+// call site (return address), separately for normal days and first-of-month days; written to the JSON as "callers".
+void SetCallers(const char* spec);
 // Main thread only (calls from other threads are ignored). Enter returns whether a phase was opened; Exit must get that
 // value back. Inside RenderFrame every phase is swallowed, so all of it counts as rendering. p is a Phase or
 // kCount + an extra slot.

@@ -74,6 +74,39 @@ struct Extra {
 Extra g_extra[kExtra];
 std::atomic<int> g_nextra{ 0 };
 
+// ---- call-site histogram of one timed function (phase_callers): main thread writes, the worker reads a snapshot ----
+struct Site {
+    uintptr_t site;  // return address (RVA); 0 = empty
+    uint32_t calls;
+    uint64_t cycles;
+};
+constexpr int kSites = 512;
+Site g_sites[2][kSites];  // [0] normal days, [1] first-of-month days
+std::atomic<uint32_t> g_site_overflow{ 0 };
+std::atomic<int> g_caller_slot{ -1 };  // phase index whose call sites are recorded, -1 = none
+
+bool ReadDate(uint32_t* day, uint16_t* doy);
+
+void RecordCaller(uintptr_t site, uint64_t dt) {
+    // the date is read now, not taken from the day window: the window moves only when the tick that advanced the date
+    // ends, while the daily and monthly updates of the new day run inside that tick
+    uint32_t day = 0;
+    uint16_t doy = g_cur_doy;
+    ReadDate(&day, &doy);
+    Site* tab = g_sites[doy % 30 == 0 ? 1 : 0];
+    uint32_t h = (uint32_t)(((uint64_t)site * 0x9E3779B97F4A7C15ull) >> (64 - 9));
+    for (int k = 0; k < 16; ++k) {
+        Site& s = tab[(h + k) & (kSites - 1)];
+        if (s.site == site || s.site == 0) {
+            s.site = site;
+            ++s.calls;
+            s.cycles += dt;
+            return;
+        }
+    }
+    g_site_overflow.fetch_add(1, std::memory_order_relaxed);
+}
+
 bool ReadDate(uint32_t* day, uint16_t* doy) {
     __try {
         const uintptr_t gs = *(const uintptr_t*)(g_base + sdk::glob::g_CurrentGameState);
@@ -122,6 +155,17 @@ Fn g_orig[kAll];
 // xmm arguments and results pass through untouched.
 template <int P>
 uint64_t Detour(void* a, void* b, void* c, void* d, uint64_t e, uint64_t f, uint64_t g, uint64_t h) {
+    if (P == g_caller_slot.load(std::memory_order_relaxed)) {
+        // the hook jumps here from the function's entry, so the return address is the caller's call site
+        const uintptr_t site = (uintptr_t)_ReturnAddress() - g_base;
+        const bool opened = Enter(P);
+        const uint64_t t0 = __rdtsc();
+        const uint64_t r = g_orig[P](a, b, c, d, e, f, g, h);
+        const uint64_t dt = __rdtsc() - t0;
+        Exit(opened);
+        if (opened) RecordCaller(site, dt);
+        return r;
+    }
     const bool opened = Enter(P);
     const uint64_t r = g_orig[P](a, b, c, d, e, f, g, h);
     Exit(opened);
@@ -285,6 +329,30 @@ void SetExtra(const char* spec) {
     for (int i = 0; i < n; ++i) g_extra[i].active.store(wanted[i]);
 }
 
+void SetCallers(const char* spec) {
+    if (!g_installed.load() || !spec) return;
+    char* end = nullptr;
+    const uintptr_t rva = (uintptr_t)strtoull(spec, &end, 16);
+    int slot = -1;
+    if (end != spec && rva) {
+        for (const Target& t : kTargets) {
+            if (t.rva == rva && g_orig[t.phase]) slot = t.phase;
+        }
+        const int n = g_nextra.load();
+        for (int i = 0; i < n; ++i) {
+            if (g_extra[i].rva == rva && g_extra[i].hooked) slot = kCount + i;
+        }
+        if (slot < 0) Log("phase_callers: 0x%llX is not a timed function (name it in phase_extra first); ignored", (unsigned long long)rva);
+    }
+    if (slot == g_caller_slot.load()) return;
+    g_caller_slot.store(-1);
+    Sleep(20);  // a call in flight finishes before the tables are cleared (the main thread writes them)
+    memset(g_sites, 0, sizeof g_sites);
+    g_site_overflow.store(0);
+    g_caller_slot.store(slot);
+    if (slot >= 0) Log("phase_callers: recording the call sites of %s", NameOf(slot));
+}
+
 bool Enter(int p) {
     if (!g_on.load(std::memory_order_relaxed)) return false;
     const DWORD tid = GetCurrentThreadId();
@@ -375,7 +443,24 @@ void WriteJson() {
         for (int k = 0; k < cols; ++k) fprintf(f, ", %u", r.calls[k]);
         fputs("]", f);
     }
-    fputs("\n]}\n", f);
+    fputs("\n]", f);
+    const int slot = g_caller_slot.load();
+    if (slot >= 0) {
+        fprintf(f, ",\n\"callers\": {\"of\": \"%s\", \"overflow\": %u", NameOf(slot), g_site_overflow.load());
+        for (int t = 0; t < 2; ++t) {
+            fprintf(f, ", \"%s\": [", t ? "month" : "normal");
+            bool first = true;
+            for (int i = 0; i < kSites; ++i) {
+                const Site s = g_sites[t][i];  // a racy copy: a count may be one call behind, never garbage
+                if (!s.site) continue;
+                fprintf(f, "%s[%llu, %u, %llu]", first ? "" : ", ", (unsigned long long)s.site, s.calls, (unsigned long long)s.cycles);
+                first = false;
+            }
+            fputs("]", f);
+        }
+        fputs("}", f);
+    }
+    fputs("}\n", f);
     fclose(f);
     MoveFileExW(tmp.c_str(), (dir + L"\\stellaris_perf_phases.json").c_str(), MOVEFILE_REPLACE_EXISTING);
 }

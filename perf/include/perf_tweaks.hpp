@@ -67,6 +67,8 @@ struct Settings {
     bool phase_profile = false;
     // Extra functions timed by phase_profile: "0xRVA[=name], ..." (perf_phase.hpp)
     std::string phase_extra;
+    // Record the call sites of one timed function: "0xRVA" (perf_phase.hpp)
+    std::string phase_callers;
     // Profile of scope resolution (CEventTarget::GetScope, CEventScope::Copy) per game day
     bool scope_profile = false;
     int modifier_flush_max = 32;  // largest dirty set taking the serial path

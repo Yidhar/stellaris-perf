@@ -136,6 +136,25 @@ skipping the second pop-job pass when the first changed nothing (-30 to -40 ms, 
 ordering of the parallel phases (up to -20 ms). The on_action cost is script trigger evaluation and has no safe shortcut
 in the plugin.
 
+**Where the 45k `CModifierNodeBase::Update` calls come from** (`phase_callers=0x238300`, call sites recorded per day
+kind, [`monthly_r7_modnode_update_call_sites.json`](data/phases-late-4.5.2/monthly_r7_modnode_update_call_sites.json);
+times here are inclusive of nested node updates, so they overlap):
+
+| On a month start (per month start) | calls | inclusive | each |
+|---|---|---|---|
+| the modifier manager's flush loop (0x231B20): every invalidated node recomputed on demand | 29k | 64 ms | 2.2 us |
+| inside the pop-group add path (0xDB0BB0) | 500 | 17 ms | 34 us |
+| pop-group helpers 0xDAFAB8 / 0xDAFB10 | 1230 / 730 | 12 / 8.5 ms | 10-12 us |
+| pop job assignment (0xB35F30), `UpdatePopJobs` | 370 / 1130 | 8 / 7 ms | 22 / 6 us |
+| 0xDB0C60 (pop-group removal path) | 240 | 8 ms | 33 us |
+
+The 10-34 us calls are each a flush: a pop-group change invalidates the colony's modifier subtree and the next modifier
+read, inside the same change or the next step of the colony's monthly pass, recomputes it, about 2,900 times per month
+start. On a normal day the whole thing is 1.4 ms (0.6 ms from `CCountry::DailyUpdateSerial`, 0.4 ms from the flush
+loop). Batching the flushes over a colony's monthly pass would save most of the 62 ms, but the steps of that pass
+(migration, assembly, decline, growth) read the values the previous step changed, so a blanket deferral changes what they
+compute; which of the reads are genuinely needed has to be read out of the pass's code first.
+
 ## Caveats
 
 - The arena save is a stress case (16k ships fighting); the late-game save is closer to a normal long game and shows the

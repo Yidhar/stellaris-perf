@@ -112,6 +112,9 @@ perf::Settings ReadIni(const std::wstring& path) {
     wchar_t extra[2048] = {};
     GetPrivateProfileStringW(L"perf", L"phase_extra", L"", extra, (DWORD)(sizeof extra / sizeof extra[0]), p);
     s.phase_extra = Utf8(extra);
+    wchar_t callers[64] = {};
+    GetPrivateProfileStringW(L"perf", L"phase_callers", L"", callers, (DWORD)(sizeof callers / sizeof callers[0]), p);
+    s.phase_callers = Utf8(callers);
     return s;
 }
 
