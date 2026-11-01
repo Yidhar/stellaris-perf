@@ -1479,6 +1479,7 @@ void Apply(const Settings& s) {
     ui::SetProbe(s.ui_probe);
     ui::SetCapAll(s.render_cap_between_ticks);
     phase::SetEnabled(s.phase_profile);
+    phase::SetExtra(s.phase_extra.c_str());
     if (s.scope_profile && !g_scope_profile.load()) {
         for (int a = 0; a < 2; ++a)
             for (int b = 0; b < 2; ++b) {

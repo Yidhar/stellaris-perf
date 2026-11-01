@@ -5,9 +5,12 @@
 
 #include <windows.h>
 #include <intrin.h>
+#include <array>
 #include <atomic>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <utility>
 
 namespace perf::phase {
 
@@ -20,14 +23,15 @@ namespace {
 // 360-day years (so the 1st of a month is day-of-year % 30 == 0).
 constexpr int32_t kHoursOrigin = 43800000;
 constexpr int kMaxDays = 4096;
+constexpr int kAll = kCount + kExtra;
 
 struct DayRec {
     uint32_t day;        // days since the engine's origin
     uint16_t doy;        // day of year, 0 = 1 January
     uint16_t ticks;      // ticks attributed to the day (10 when complete)
     uint64_t wall;       // cycles from the start of the day's first tick to the start of the next day's first tick
-    uint64_t ph[kCount]; // exclusive cycles per phase
-    uint32_t calls[kCount];  // phase entries (render_in_tick / render_between: frames drawn; gui: frame function iterations)
+    uint64_t ph[kAll];   // exclusive cycles per phase
+    uint32_t calls[kAll];  // phase entries (render_in_tick / render_between: frames drawn; gui: frame function iterations)
 };
 
 std::atomic<bool> g_on{ false };
@@ -39,17 +43,17 @@ uintptr_t g_base = 0;
 DWORD g_tid = 0;
 bool g_started = false;        // accumulators were reset after the setting came on
 struct Frame {
-    Phase p;
+    int p;
     uint64_t t0;
     uint64_t child;
 };
-Frame g_stack[32];
+Frame g_stack[48];
 int g_depth = 0;
 int g_in_render = 0;
 int g_in_tick = 0;
-uint64_t g_acc[kCount];        // the current day, phases between ticks
-uint64_t g_tick_acc[kCount];   // the tick in progress (attributed to a day when it ends)
-uint32_t g_calls[kCount], g_tick_calls[kCount];
+uint64_t g_acc[kAll];        // the current day, phases between ticks
+uint64_t g_tick_acc[kAll];   // the tick in progress (attributed to a day when it ends)
+uint32_t g_calls[kAll], g_tick_calls[kAll];
 uint64_t g_tick_t0 = 0;
 uint32_t g_cur_day = 0xFFFFFFFF;
 uint16_t g_cur_doy = 0, g_cur_ticks = 0;
@@ -59,6 +63,16 @@ uint64_t g_day_t0 = 0;
 DayRec g_days[kMaxDays];
 std::atomic<uint32_t> g_ndays{ 0 };
 std::atomic<uint32_t> g_dropped{ 0 };  // days not recorded because the table is full
+
+// ---- extra entry points from the ini (phase_extra), hooked while the game runs ----
+struct Extra {
+    uintptr_t rva;
+    char name[40];
+    bool hooked;
+    std::atomic<bool> active;  // named in the current phase_extra; a hook is never removed, only ignored
+};
+Extra g_extra[kExtra];
+std::atomic<int> g_nextra{ 0 };
 
 bool ReadDate(uint32_t* day, uint16_t* doy) {
     __try {
@@ -100,19 +114,25 @@ void FinishDay(uint64_t t_end) {
     g_ndays.store(n + 1, std::memory_order_release);
 }
 
-// ---- the hooks this module owns: 4.5.2 entry points, each checked against its first bytes ----
+// ---- the hooks: 4.5.2 entry points, each checked against its first bytes ----
 using Fn = uint64_t (*)(void*, void*, void*, void*, uint64_t, uint64_t, uint64_t, uint64_t);
-Fn g_orig[kCount];
+Fn g_orig[kAll];
 
 // Forwards four register and four stack arguments, enough for every function here; no floating point is touched, so
 // xmm arguments and results pass through untouched.
 template <int P>
 uint64_t Detour(void* a, void* b, void* c, void* d, uint64_t e, uint64_t f, uint64_t g, uint64_t h) {
-    const bool opened = Enter((Phase)P);
+    const bool opened = Enter(P);
     const uint64_t r = g_orig[P](a, b, c, d, e, f, g, h);
     Exit(opened);
     return r;
 }
+
+template <size_t... I>
+constexpr std::array<void*, sizeof...(I)> MakeExtraDetours(std::index_sequence<I...>) {
+    return { (void*)&Detour<kCount + (int)I>... };
+}
+const std::array<void*, kExtra> kExtraDetours = MakeExtraDetours(std::make_index_sequence<kExtra>{});
 
 struct Target {
     Phase phase;
@@ -136,6 +156,31 @@ const Target kTargets[] = {
     { kGui2, 0x1C0A7A0, "GUI update", { 0x48, 0x89, 0x5C, 0x24, 0x20, 0x4C, 0x89, 0x44 }, (void*)&Detour<kGui2> },
     { kApp, 0x1A4D610, "application update", { 0x40, 0x55, 0x56, 0x57, 0x41, 0x54, 0x41, 0x55 }, (void*)&Detour<kApp> },
 };
+
+const char* NameOf(int p) { return p < kCount ? kNames[p] : g_extra[p - kCount].name; }
+
+// True when rva is the start of a function of the exe: an entry of the exception directory whose unwind info is not a
+// chained one (a chunk of another function). Hooking anything else would corrupt the code, so phase_extra is checked.
+bool IsFunctionStart(uintptr_t rva) {
+    __try {
+        auto dos = (const IMAGE_DOS_HEADER*)g_base;
+        auto nt = (const IMAGE_NT_HEADERS*)(g_base + dos->e_lfanew);
+        const IMAGE_DATA_DIRECTORY& dir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXCEPTION];
+        if (!dir.VirtualAddress || !dir.Size) return false;
+        auto rf = (const RUNTIME_FUNCTION*)(g_base + dir.VirtualAddress);
+        size_t lo = 0, hi = dir.Size / sizeof(RUNTIME_FUNCTION);
+        while (lo < hi) {
+            const size_t mid = (lo + hi) / 2;
+            if (rf[mid].BeginAddress < rva) lo = mid + 1;
+            else hi = mid;
+        }
+        if (lo >= dir.Size / sizeof(RUNTIME_FUNCTION) || rf[lo].BeginAddress != rva) return false;
+        const uint8_t flags = *(const uint8_t*)(g_base + rf[lo].UnwindData) >> 3;
+        return (flags & UNW_FLAG_CHAININFO) == 0;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
 
 }  // namespace
 
@@ -179,7 +224,68 @@ void SetEnabled(bool on) {
 
 bool Enabled() { return g_on.load(std::memory_order_relaxed); }
 
-bool Enter(Phase p) {
+void SetExtra(const char* spec) {
+    if (!g_installed.load() || !spec) return;
+    const int n0 = g_nextra.load();
+    bool wanted[kExtra] = {};
+    // "0xRVA[=name], 0xRVA[=name], ..."
+    const char* s = spec;
+    while (*s) {
+        while (*s == ' ' || *s == ',' || *s == ';') ++s;
+        if (!*s) break;
+        char* end = nullptr;
+        const uintptr_t rva = (uintptr_t)strtoull(s, &end, 16);
+        if (end == s) {  // not a number: skip the token
+            while (*s && *s != ',' && *s != ';') ++s;
+            continue;
+        }
+        s = end;
+        char name[40] = {};
+        if (*s == '=') {
+            ++s;
+            int k = 0;
+            while (*s && *s != ',' && *s != ';' && *s != ' ') {
+                if (k < (int)sizeof name - 1) name[k++] = *s;
+                ++s;
+            }
+        }
+        if (!name[0]) snprintf(name, sizeof name, "x_%llX", (unsigned long long)rva);
+        int slot = -1;
+        for (int i = 0; i < n0; ++i) {
+            if (g_extra[i].rva == rva) { slot = i; break; }
+        }
+        if (slot < 0) {
+            const int n = g_nextra.load();
+            if (n >= kExtra) {
+                Log("phase_extra: no slot left for 0x%llX (%d at most)", (unsigned long long)rva, kExtra);
+                continue;
+            }
+            Extra& e = g_extra[n];
+            e.rva = rva;
+            memcpy(e.name, name, sizeof e.name);
+            e.hooked = false;
+            if (!IsFunctionStart(rva)) {
+                Log("phase_extra: 0x%llX is not the start of a function of the exe; ignored", (unsigned long long)rva);
+            } else if (MH_CreateHook((LPVOID)(g_base + rva), kExtraDetours[n], (LPVOID*)&g_orig[kCount + n]) != MH_OK ||
+                       MH_EnableHook((LPVOID)(g_base + rva)) != MH_OK) {
+                Log("phase_extra: could not hook 0x%llX (already hooked by another option?); ignored", (unsigned long long)rva);
+                g_orig[kCount + n] = nullptr;
+            } else {
+                e.hooked = true;
+                Log("phase_extra: timing 0x%llX as %s", (unsigned long long)rva, e.name);
+            }
+            g_nextra.store(n + 1, std::memory_order_release);
+            slot = n;
+        } else if (name[0] && strcmp(g_extra[slot].name, name) != 0) {
+            memcpy(g_extra[slot].name, name, sizeof name);
+        }
+        if (slot < kExtra) wanted[slot] = g_extra[slot].hooked;
+    }
+    const int n = g_nextra.load();
+    for (int i = 0; i < n; ++i) g_extra[i].active.store(wanted[i]);
+}
+
+bool Enter(int p) {
     if (!g_on.load(std::memory_order_relaxed)) return false;
     const DWORD tid = GetCurrentThreadId();
     if (p == kTick) {
@@ -200,6 +306,7 @@ bool Enter(Phase p) {
     } else {
         if (tid != g_tid || !g_started) return false;
         if (g_in_render > 0) return false;  // everything inside RenderFrame is rendering
+        if (p >= kCount && !g_extra[p - kCount].active.load(std::memory_order_relaxed)) return false;
         if (p == kRenderTick || p == kRenderFrame) {
             p = g_in_tick > 0 ? kRenderTick : kRenderFrame;
             ++g_in_render;
@@ -236,18 +343,16 @@ void OnTickEnd() {
     uint32_t day;
     uint16_t doy;
     if (!ReadDate(&day, &doy)) return;
-    const uint64_t now = __rdtsc();
     if (day != g_cur_day) {
         // this tick moved the date: it belongs to the new day, from its start
         if (g_cur_day != 0xFFFFFFFF) FinishDay(g_tick_t0);
         StartDay(day, doy, g_tick_t0);
     }
-    for (int i = 0; i < kCount; ++i) {
+    for (int i = 0; i < kAll; ++i) {
         g_acc[i] += g_tick_acc[i];
         g_calls[i] += g_tick_calls[i];
     }
     ++g_cur_ticks;
-    (void)now;
 }
 
 void WriteJson() {
@@ -255,18 +360,19 @@ void WriteJson() {
     const std::wstring dir = LogDirectory();
     if (dir.empty()) return;
     const uint32_t n = g_ndays.load(std::memory_order_acquire);
+    const int cols = kCount + g_nextra.load(std::memory_order_acquire);
     CreateDirectoryW(dir.c_str(), nullptr);
     const std::wstring tmp = dir + L"\\stellaris_perf_phases.json.tmp";
     FILE* f = _wfopen(tmp.c_str(), L"w");
     if (!f) return;
-    fprintf(f, "{\"tsc_per_sec\": %.0f, \"dropped\": %u, \"names\": [", g_tsc_per_sec, g_dropped.load());
-    for (int i = 0; i < kCount; ++i) fprintf(f, "%s\"%s\"", i ? ", " : "", kNames[i]);
+    fprintf(f, "{\"tsc_per_sec\": %.0f, \"dropped\": %u, \"fixed\": %d, \"names\": [", g_tsc_per_sec, g_dropped.load(), (int)kCount);
+    for (int i = 0; i < cols; ++i) fprintf(f, "%s\"%s\"", i ? ", " : "", NameOf(i));
     fprintf(f, "],\n\"days\": [\n");
     for (uint32_t i = 0; i < n; ++i) {
         const DayRec& r = g_days[i];
         fprintf(f, "%s[%u, %u, %u, %llu", i ? ",\n" : "", r.day, (unsigned)r.doy, (unsigned)r.ticks, (unsigned long long)r.wall);
-        for (int k = 0; k < kCount; ++k) fprintf(f, ", %llu", (unsigned long long)r.ph[k]);
-        for (int k = 0; k < kCount; ++k) fprintf(f, ", %u", r.calls[k]);
+        for (int k = 0; k < cols; ++k) fprintf(f, ", %llu", (unsigned long long)r.ph[k]);
+        for (int k = 0; k < cols; ++k) fprintf(f, ", %u", r.calls[k]);
         fputs("]", f);
     }
     fputs("\n]}\n", f);
@@ -300,7 +406,7 @@ std::string Summary() {
         snprintf(s, sizeof s, "%d days wall %.1f ms (tick %.1f, render %.1f, ui %.1f)", cnt[b], wall[b] * k, tick[b] * k, render[b] * k, ui[b] * k);
         return std::string(s);
     };
-    snprintf(buf, sizeof buf, "phase_profile=on days=%u normal: %s | month start: %s", n, part(0).c_str(), part(1).c_str());
+    snprintf(buf, sizeof buf, "phase_profile=on days=%u extra=%d normal: %s | month start: %s", n, g_nextra.load(), part(0).c_str(), part(1).c_str());
     return std::string(buf);
 }
 

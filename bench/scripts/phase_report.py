@@ -59,6 +59,9 @@ def main():
         calls = {nm: (sum(d[4 + k + i] for d in rows) / n if len(rows[0]) >= 4 + 2 * k else None) for i, nm in enumerate(names)}
         acc = sum(ph.values())
         groups = [("tick total", TICK), ("save (between ticks)", SAVE), ("render", RENDER), ("ui per frame", UI)]
+        extras = tuple(names[J.get("fixed", 14):])
+        if extras:
+            groups.append(("extra (phase_extra; nested in the above, which lose this time)", extras))
         for gname, members in groups:
             tot = sum(ph[m] for m in members)
             print(f"  {gname:<16} {tot:8.1f} ms/day {100 * tot / mean_wall:5.1f}%")

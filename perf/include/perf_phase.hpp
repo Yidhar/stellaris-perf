@@ -32,15 +32,22 @@ enum Phase : int {
     kCount
 };
 extern const char* const kNames[kCount];
+// Extra entry points from the ini (phase_extra = "0xRVA[=name], ..."): functions of the exe hooked while the game runs
+// and timed like the fixed phases (exclusive time and call count, nested wherever they are called). Only the start of a
+// function of the exe (its exception-directory entry) is accepted; a hook stays until unload and is just ignored when
+// its RVA leaves the list. Main-thread calls only; the parts that run on the worker threads are not timed.
+constexpr int kExtra = 128;
 
 // Hooks the entry points that no other module hooks (each checked against its first bytes; one that does not match is
 // skipped). The tick, RenderFrame and the frame function report through Enter/Exit from their own detours.
 bool Install(uintptr_t base);
 void SetEnabled(bool on);
 bool Enabled();
+void SetExtra(const char* spec);
 // Main thread only (calls from other threads are ignored). Enter returns whether a phase was opened; Exit must get that
-// value back. Inside RenderFrame every phase is swallowed, so all of it counts as rendering.
-bool Enter(Phase p);
+// value back. Inside RenderFrame every phase is swallowed, so all of it counts as rendering. p is a Phase or
+// kCount + an extra slot.
+bool Enter(int p);
 void Exit(bool opened);
 // After HandleTurnTick returned: attributes the tick to its game day and closes the day when the date moved on.
 void OnTickEnd();

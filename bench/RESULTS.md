@@ -106,6 +106,36 @@ Milliseconds per game day; the share is of that day's wall time.
 - An earlier run of the same 400 days measured normal days at 201 ms (median 187): the machine's load moves the absolute
   numbers by about 10 % between runs, the shares stay.
 
+## The monthly update, decomposed (`phase_extra`)
+
+`phase_extra` hooks any functions of the exe (by RVA, function starts only) while the game runs and times them like the
+fixed phases, so a phase can be split level by level without rebuilding. Four rounds on the same save, five month starts
+each: every round hooked the direct callees of the previous round's biggest items. The settings of the last round are in
+[`data/phases-late-4.5.2/monthly_r6_settings.ini`](data/phases-late-4.5.2/monthly_r6_settings.ini), the records next to it.
+A first-of-month day is 620 to 710 ms (a normal day about 200); `CGameState::MonthlyUpdate` is about 415 ms of it.
+Exclusive time per leaf, ms per month start, 4.5.2 RVAs:
+
+| Leaf | ms | calls x each | What it is |
+|---|---|---|---|
+| Pop-group size changes (growth, decline, migration landing) | ~135 | | `CColony::ApplyMonthlyGrowth` -> `AccessOrAddPopGroupAddSize` -> `CPopGroup::AddSize` / `MoveSizeFrom` |
+| &nbsp;&nbsp;`CModifierNodeBase::Update` (0x238300): modifier nodes recomputed | 61 | 45.8k x 1.3 us | every size change invalidates the colony's nodes, the next read recomputes; a normal day has 9.6k calls, 1.6 ms |
+| &nbsp;&nbsp;`CPopGroup::MoveSizeFrom` (0x67E240) | 38 | 1650 x 23 us | migration categories, ethics attraction, species deconversion, Robin-Hood tables |
+| &nbsp;&nbsp;invalidation helper 0xDB0D20 (modifier manager AddInvalid, InvalidateChildren) | 31 | 800 x 39 us | |
+| `COnActionDatabase::PerformEvent` (0x3F9F50) | 70-89 | 2500 x 28-35 us | on_pop_growth and the like: the trigger of every event attached to the on_action is evaluated (`CEvent::IsValid`), most do not fire. Normal days: 325-440 calls, 6-7 ms (3 %) |
+| Pop job assignment: `NPlanetJobs::UpdatePopJobs` -> 0xB36CC0 (the AssignPopsToJobs core) and its callees | 45-75 | 8-9 calls | the core's own part 17-47 ms (includes the wait for its parallel part), 0xB358B0 12, 0xB340B0 8, 0xB34790 5 |
+| Parallel phases the main thread waits for: 0x2ADC10 (a country monthly phase), ship upkeep (0x1B4D690) | 24 + 20 | 1 each | the slowest chunk |
+| `on_monthly` on_action (0xE1C3F0) | 19 | 1 | script events |
+| Armies (`NPlanetArmies`, 0x945C60) | 14 | 446 x 31 us | |
+| Leader cost and cap per country (0x775220) | 10 | 78 x 134 us | |
+| Remaining own time: `MonthlyUpdate` itself 6-36, country serial update 15, colony update 10, `UpdatePopJobs` 10, 0xDBADC0 11, assembly 6, decline 5, ... | ~80 | | |
+
+On a month start the daily update also costs 15-20 ms more than usual and 5.8 frames are drawn inside the long tick
+(+45 ms). Candidates, by value against risk: batching the modifier invalidation over a colony's monthly pass (up to about
+-70 ms, needs the callers of the 45.8k node updates checked first, since growth code may read the intermediate values);
+skipping the second pop-job pass when the first changed nothing (-30 to -40 ms, semantics to confirm); longest-first
+ordering of the parallel phases (up to -20 ms). The on_action cost is script trigger evaluation and has no safe shortcut
+in the plugin.
+
 ## Caveats
 
 - The arena save is a stress case (16k ships fighting); the late-game save is closer to a normal long game and shows the

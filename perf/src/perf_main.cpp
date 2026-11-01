@@ -109,6 +109,9 @@ perf::Settings ReadIni(const std::wstring& path) {
     s.ui_probe = GetPrivateProfileIntW(L"perf", L"ui_probe", 0, p) != 0;
     s.render_cap_between_ticks = GetPrivateProfileIntW(L"perf", L"render_cap_between_ticks", 1, p) != 0;
     s.phase_profile = GetPrivateProfileIntW(L"perf", L"phase_profile", 0, p) != 0;
+    wchar_t extra[2048] = {};
+    GetPrivateProfileStringW(L"perf", L"phase_extra", L"", extra, (DWORD)(sizeof extra / sizeof extra[0]), p);
+    s.phase_extra = Utf8(extra);
     return s;
 }
 

@@ -152,7 +152,9 @@ within that day, so they are not the engine's exact behaviour and are off by def
   drawn inside a tick and between ticks, and the frame function's own GUI update and draw. Every phase gets its exclusive
   time. One record per game day goes to `logs\stellaris_perf_phases.json`; `python bench\scripts\phase_report.py` groups
   the days (normal, first of a month, 1 January, 1 July) and prints ms per day and the share of the wall time, so the
-  month-start and autosave spikes are visible instead of averaged away.
+  month-start and autosave spikes are visible instead of averaged away. `phase_extra` (`0xRVA[=name], ...`) adds any
+  functions of the exe to the timing while the game runs (only function starts are accepted), to drill into a phase
+  without rebuilding.
 - The current settings and counters are also published in a read-only shared-memory block
   (`Local\stellaris_perf_stats_<pid>`, layout in `perf/include/perf_shared.hpp`) that the benchmark scripts read.
 
