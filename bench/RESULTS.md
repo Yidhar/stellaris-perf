@@ -151,9 +151,39 @@ times here are inclusive of nested node updates, so they overlap):
 The 10-34 us calls are each a flush: a pop-group change invalidates the colony's modifier subtree and the next modifier
 read, inside the same change or the next step of the colony's monthly pass, recomputes it, about 2,900 times per month
 start. On a normal day the whole thing is 1.4 ms (0.6 ms from `CCountry::DailyUpdateSerial`, 0.4 ms from the flush
-loop). Batching the flushes over a colony's monthly pass would save most of the 62 ms, but the steps of that pass
-(migration, assembly, decline, growth) read the values the previous step changed, so a blanket deferral changes what they
-compute; which of the reads are genuinely needed has to be read out of the pass's code first.
+loop).
+
+**The colony pass's modifier work (`colony_monthly_batch`).** Read out of `CColony::MonthlyUpdateSerial` (0xDC43E0)
+and its helpers: the pass applies amounts the parallel demography pass computed beforehand (migration, growth,
+assembly, decline), one pop group at a time; after each change `CColony::OnAddPops` / `OnRemovePops` force the colony's
+node up to date (`CModifierNodeBase::Update` at 0xDAFAD3 / 0xDAFB55), recompute the cached values
+(`MicroUpdateCachedValues` at 0xDAFAE2 / 0xDAFB64) and invalidate the node again when they changed, and a new pop
+group's node is refreshed at creation (0xDB0C34, 0xDB0CF0 / 0xDB0CF9). Nothing in the pass needs those intermediate
+refreshes (the amounts are precomputed), so the first version skipped them for the colony whose pass is running and did
+them once at its end: measured in one continuous run with the setting alternating from month start to month start (24
+month starts, [`colony_batch_interleave_24m.json`](data/phases-late-4.5.2/colony_batch_interleave_24m.json), the mode
+of each in `..._modes.json`), 37.9k forced refreshes skipped, monthly update 380.7 ms on against 378.6 ms off: nothing.
+`Update` only works when the node's dirty flag (+0x108) is set, and the events fired by every change (2,400
+`PerformEvent` calls per month start) read the colony's modifiers in between, so the node was rebuilt on demand before
+the forced refresh ran; the invalidation (`CColony::InvalidateModifier` 0xDACEF0: dirty flag, `InvalidateChildren`
+0x238430, `AddInvalid`) and the reads drive the rebuilds. What does save: `1` additionally holds the modifier
+manager's flush while a colony's pass runs (about 14 per month start fall inside the passes; the next flush after the
+pass rebuilds the dirty nodes once; on-demand readers are unaffected), `2` also freezes the colony's node during its own
+pass (about 1,300 reads of it per month start from inside the pass get the pre-pass node; it is rebuilt once at the end
+and the colony invalidated again). Three-way run, 36 month starts
+([`colony_batch_interleave3_36m.json`](data/phases-late-4.5.2/colony_batch_interleave3_36m.json)): monthly update
+369.7 ms off, 358.3 ms with `1`, 345.2 ms with `2` (medians 366 / 356 / 345); a second run of 72 month starts
+([`colony_batch_interleave3_72m.json`](data/phases-late-4.5.2/colony_batch_interleave3_72m.json), the autosave days
+spread over the modes): 397.3 / 387.1 / 349.3 ms (medians 403 / 361 / 356). `2` takes 25-48 ms off the month-start
+monthly update (-7 to -12 %), about -1 ms per day averaged; `1` alone is within the noise of these runs (-3 to -10 ms
+means, -10 to -42 ms medians). 124k forced refreshes skipped, 1,051 flushes held and 31k reads of a frozen node over
+the 72 months, no mismatch reported by the engine.
+
+Two runs of the same save cannot be compared save for save: the engine reseeds a loaded game from the clock unless its
+`UseSavedRandom` console variable is set (`stellaris_bench.dll` now sets it), and even with the seed kept two runs of
+`late_base` differ in 70k places of the gamestate after six months (the engine's own threading), which also puts
++-50-90 ms of world noise on any month start compared across runs. A/B measurements of month starts are therefore done
+inside one run, alternating the setting (the ini is re-read every 2 s).
 
 ## Caveats
 

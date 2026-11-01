@@ -56,6 +56,9 @@ struct Settings {
     // Parallel ship update: pass the combat participants table's own SCombatParticipants to CShip::MicroUpdateParallel
     // instead of a deep copy per ship (perf_combat.hpp)
     bool combat_no_copy = true;
+    // Colony monthly pass: 1 = the forced modifier refreshes done once at the end of the pass and the manager's flush
+    // held during it, 2 = also the colony's node frozen during its pass (perf_colony.hpp); 0 = off
+    int colony_monthly_batch = 2;
     // Frame rate cap for frames drawn in the middle of a tick (frame smoothing); 0 = the game's own rate (perf_render.hpp)
     int tick_render_fps = 10;
     // Logs how often the engine's frame function runs against the ticks (perf_ui.hpp); measurement only

@@ -97,6 +97,24 @@ are off pass straight through to the engine.
   found by its byte pattern, which must match exactly once): the callee gets the table's own object and the code that
   would destroy the copy is skipped. The table is not changed while the ships are updated, so every ship sees the data
   it saw before. The patch is written and removed only between ticks, while the worker threads are idle.
+- **Less modifier work inside a colony's monthly pass** (`colony_monthly_batch`, default `2`). The colony monthly
+  pass (`CColony::MonthlyUpdateSerial`: migration, growth, assembly, decline, with amounts the parallel demography pass
+  computed beforehand) changes pop-group sizes one group at a time. Every change invalidates the colony's modifier node,
+  and the node is rebuilt on demand by the next reader: the triggers of the events the change fires, the refresh the
+  engine forces after each change (node, then the cached amenities, crime and stability, then another invalidation), a
+  new pop group's refresh — about 1,300 rebuilds of the node per month start on a late save, plus a few runs of the
+  modifier manager's flush inside the passes. `1`: the forced refreshes are skipped while a colony's own pass runs and
+  done once when it ends, in the engine's order, and the manager's flush is held during a pass (its dirty nodes are
+  rebuilt by the next flush after it); readers rebuild a dirty node on demand, so nothing a script or the engine reads
+  changes. `2`: in addition the colony's node is frozen during its own pass: every read of it from inside the pass
+  (event triggers on `on_pop_growth` and the like, the pass's own code) gets the node as it was when the pass began;
+  it is rebuilt once at the end and the colony invalidated again, so whatever was computed from the frozen node is
+  rebuilt afterwards. Deterministic, so two clients that both run it agree. What differs from the engine in both
+  modes: a colony whose amenities or housing tier moves during its own pass gets the stability that goes with the tier
+  from before the pass (the engine: from before the pass's last change), and an `on_pop_growth` / `on_pop_purged`
+  event reading the cached values sees the pre-pass ones. Measured on a late save, the month-start monthly update in
+  two runs of 36 and 72 month starts: `0` 370 / 397 ms, `1` 358 / 387 ms, `2` 345 / 349 ms (see
+  [`bench/RESULTS.md`](bench/RESULTS.md)).
 
 - **Frame cap inside ticks** (`tick_render_fps`, default 10). With frame smoothing on, the engine draws a frame from inside
   the simulation whenever its refresh-rate based timer says one is due; on a high-refresh monitor that is up to the
@@ -174,6 +192,7 @@ clones.
 | `alloc_cache` | `1` | large-block recycler for the engine's `operator new` / `free` |
 | `alloc_cache_mb` | `8` | most memory each thread keeps cached (MB, `0` = off) |
 | `combat_no_copy` | `1` | share the combat participants table's object instead of copying it per ship |
+| `colony_monthly_batch` | `2` | colony monthly pass: `1` forced refreshes once at the end, flush held; `2` also the colony's node frozen during its pass |
 | `tick_render_fps` | `10` | most frames per second drawn in the middle of a tick (`0` = the game's own rate) |
 | `render_cap_between_ticks` | `1` | the same cap for the frames drawn between ticks, while the simulation runs |
 | `fleet_manager_cache` | `1` | cache fleet military power in the fleet manager window |

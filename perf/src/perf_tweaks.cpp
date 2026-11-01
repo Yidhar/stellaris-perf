@@ -3,6 +3,7 @@
 #include "perf_phase.hpp"
 #include "perf_alloc.hpp"
 #include "perf_combat.hpp"
+#include "perf_colony.hpp"
 #include "perf_render.hpp"
 #include "perf_ui.hpp"
 #include "stellaris_sdk.hpp"
@@ -1041,6 +1042,7 @@ void FullFlush(void* mgr, int why) {
 }
 
 void ManagerUpdateDetour(void* mgr) {
+    if (colony::HoldFlush()) return;  // inside a colony's monthly pass: the next flush after it rebuilds the dirty nodes once
     const int mode = g_flush_mode.load(std::memory_order_relaxed);
     if (mode == 0 || GetCurrentThreadId() != g_main_tid.load(std::memory_order_relaxed)) return g_orig_mgr_update(mgr);
     auto* m = (unsigned char*)mgr;
@@ -1412,6 +1414,7 @@ bool Install(uintptr_t base) {
     if (ok) {  // not essential: without them only these two optimizations are missing
         alloc::Install(base);
         combat::Install(base);
+        colony::Install(base);
         render::Install(base);
         ui::Install(base);
         phase::Install(base);
@@ -1475,6 +1478,7 @@ void Apply(const Settings& s) {
     SetFleetGrain1(s.fleet_parallel_grain1);
     alloc::Configure(s.alloc_cache, s.alloc_cache_mb);
     combat::Want(s.combat_no_copy);
+    colony::SetMode(s.colony_monthly_batch);
     render::SetFps(s.tick_render_fps);
     ui::SetProbe(s.ui_probe);
     ui::SetCapAll(s.render_cap_between_ticks);
@@ -1636,7 +1640,7 @@ std::string StatsLine() {
            one("flag_simd(hits=static misses=dynamic bypass=unreadable)", g_flag_stats, g_flag_mode.load() != 0) +
            " mismatches=" + std::to_string(g_flag_mismatch.load()) + " | " +
            one("flag_expiry_skip(hits=skipped)", g_expiry_stats, g_expiry_skip.load()) +
-           " | tick_render_fps=" + (render::Installed() ? std::to_string(render::Dropped()) + " dropped / " + std::to_string(render::Passed()) + " drawn" : std::string("unavailable")) + " | combat_no_copy=" + (combat::Patched() ? "on" : (combat::Installed() ? "off" : "unavailable")) + " | " + AllocStats() + " | " + phase::Summary() + " | " + FlushStats() + " | " + ScopeStats() +
+           " | tick_render_fps=" + (render::Installed() ? std::to_string(render::Dropped()) + " dropped / " + std::to_string(render::Passed()) + " drawn" : std::string("unavailable")) + " | combat_no_copy=" + (combat::Patched() ? "on" : (combat::Installed() ? "off" : "unavailable")) + " | " + colony::Stats() + " | " + AllocStats() + " | " + phase::Summary() + " | " + FlushStats() + " | " + ScopeStats() +
            " | gen=" + std::to_string(g_gen.load()) + prof;
 }
 
