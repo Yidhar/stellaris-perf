@@ -197,6 +197,47 @@ to month start (36 month starts,
 update 346.0 ms off, 309.5 ms on (medians 335.8 / 298.0), -36 ms or -11 % of the month-start monthly update, about
 -1.2 ms per day averaged; 18 second passes skipped, no error.
 
+**The daily AI phase is one country's update (`ai_parallel_lpt`: no gain).** `UpdateAIParallel` (0xB86900) is a
+parallel-for over the `CCountryAI` array (78 entries on the late save): tasks take entries one by one from a shared
+counter and call vtable slot 7 (0xB6EF20: skips countries without an AI, 34 of the 78, then the base update, which runs
+the AI through slot 8 and more). Hooking slot 7 per class and timing each country with rdtsc: up to 16 countries in
+flight at once, all updates together 55-58 ms of thread time, the heaviest country 16.5-18 ms, the phase 17-18 ms,
+i.e. the phase is that one empire's update, taken in the first wave in array order anyway; the rest is finished by
+12 ms. The longest-processing-time order therefore changes nothing: in one run alternating it every month (36 months,
+[`ai_parallel_lpt_interleave_36m.json`](data/phases-late-4.5.2/ai_parallel_lpt_interleave_36m.json)) the `ai` phase of
+a normal day is 14.67 ms off and 14.80 ms on (medians 13.65 / 13.05). What the waiting main thread needs is a shorter
+update for the biggest empire, which is work inside one country's AI (its ministers' and economic plans' script
+evaluation), not scheduling. The per-country measurement stays in the plugin (the stats line: phase, heaviest, sum).
+
+**Inside the heaviest country's update** (sampled from outside the game while it runs, 886 samples; the plugin
+publishes the thread in its shared statistics, `research/ai_heavy_country_profile.md` in the research repository):
+ship building and design 30 % (`CAIInteriorMinister::GetOrRequestDesign` -> `CCountry::CreateShipDesign` 19 %),
+economic strategy 18 %, planet buildings and districts 8 %, military stratagems 5 %, espionage 4.5 %, diplomatic
+acceptance 4.4 %; about 37 % of all of it inside script trigger evaluation. `CreateShipDesign` runs, per growth stage,
+the weapon and utility passes twice (`AddWeaponsToGrowthStage` -> `AddWeaponsToShipDesignSection` -> a chooser per
+slot, `AddUtilities`, three `RemoveNonPoweredComponentsInShipDesign`) and then `UpgradeComponents`; every chooser
+evaluates each candidate component's `CanBeBuiltBy`, `IsAllowed`, `IsRestricted` and `CalcAIWeight`, the last one
+`CMeanTimeToHappen::GetRawFactor(weight, out, country scope)`.
+
+**Scripted weights memoised within a phase (`ai_weight_cache`).** `GetRawFactor` (0x3BC290: hidden 8-byte return
+buffer, the factor list at +0x8B8 writes the base and the modifiers scale it) hooked with a per-thread table keyed by
+(weight, scope identity: self / from / root / prev objects, no parameters or saved event targets), valid for one AI
+phase and used only inside a country's update. 36 months alternating monthly
+([`ai_weight_cache_interleave_36m.json`](data/phases-late-4.5.2/ai_weight_cache_interleave_36m.json)): 2,600
+evaluations per phase, 90.6 % hits; the `ai` phase of a normal day 15.54 ms off, 15.35 ms on (medians 13.54 / 13.20,
+90th percentile 28.65 / 27.03). Exact and cheap, so on, but small: the repeats are few (about 30 per country), and the
+component choosers' own loops and the other checks cost more than the weight factors.
+
+**Nested parallel-fors of the AI update run inline (`ai_nested_inline`: within noise).** About 36 parallel-fors per
+phase are started from inside a country's update (the economic forecast among them); their tasks queue behind the
+other workers' countries and the forking thread spin-waits (5 % of the heaviest empire's update in the sampled
+profile). The parallel-for descriptor's constructor (0x1B50060; the Windows build ignores the max-task argument) is
+hooked and a descriptor built inside a country's update gets its task count at +0x14 set to 1, which makes
+`CPdxTaskScheduler::CreateTasks` take its serial path. 36 months alternating monthly
+([`ai_nested_inline_interleave_36m.json`](data/phases-late-4.5.2/ai_nested_inline_interleave_36m.json)): the `ai`
+phase of a normal day 15.58 ms off, 15.54 ms on (medians 14.43 / 14.07, 90th percentile 27.40 / 26.61, 95th 31.3 /
+32.9): the work the thread now runs itself replaces the wait almost one for one. Kept, off.
+
 Two runs of the same save cannot be compared save for save: the engine reseeds a loaded game from the clock unless its
 `UseSavedRandom` console variable is set (`stellaris_bench.dll` now sets it), and even with the seed kept two runs of
 `late_base` differ in 70k places of the gamestate after six months (the engine's own threading), which also puts

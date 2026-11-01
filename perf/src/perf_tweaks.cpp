@@ -5,6 +5,8 @@
 #include "perf_combat.hpp"
 #include "perf_colony.hpp"
 #include "perf_jobs.hpp"
+#include "perf_ai.hpp"
+#include "perf_weight.hpp"
 #include "perf_render.hpp"
 #include "perf_ui.hpp"
 #include "stellaris_sdk.hpp"
@@ -331,6 +333,38 @@ bool BuildRuleKey(const void* rule, const void* scope, RuleKey* key) {
     }
 }
 
+}  // namespace
+
+bool BuildScopeKey(const void* scope, ScopeKey* key) {
+    memset(key, 0, sizeof(*key));
+    RuleKey k;
+    bool saved_targets = false;
+    __try {
+        saved_targets = *(void* const*)((const unsigned char*)scope + sdk::rt::CEventScope_event_targets) != nullptr;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+    if (saved_targets || !BuildRuleKey(nullptr, scope, &k)) return false;
+    const ScopeId* slots[4] = { &k.self, &k.from, &k.root, &k.prev };
+    for (int i = 0; i < 4; ++i) {
+        key->type[i] = slots[i]->type;
+        key->local[i] = slots[i]->local;
+        key->id[i] = slots[i]->id;
+    }
+    return true;
+}
+
+void* RegisterTable(size_t bytes) {
+    void* p = calloc(1, bytes);
+    if (p) {
+        std::lock_guard<std::mutex> lock(g_tables_mutex);
+        g_tables.push_back(p);
+    }
+    return p;
+}
+
+namespace {
+
 uint32_t ReadGameDay() {
     __try {
         const uintptr_t gs = *(const uintptr_t*)(g_base + sdk::glob::g_CurrentGameState);
@@ -361,6 +395,9 @@ std::atomic<int> g_reinforce_ms{ 0 };
 // Read-only statistics for benchmarks (perf_shared.hpp)
 SharedStats* g_shared = nullptr;
 HANDLE g_shared_map = nullptr;
+}  // namespace
+SharedStats* Shared() { return g_shared; }
+namespace {
 
 void CreateShared() {
     char name[64];
@@ -1417,6 +1454,8 @@ bool Install(uintptr_t base) {
         combat::Install(base);
         colony::Install(base);
         jobs::Install(base);
+        ai::Install(base);
+        weight::Install(base);
         render::Install(base);
         ui::Install(base);
         phase::Install(base);
@@ -1482,6 +1521,9 @@ void Apply(const Settings& s) {
     combat::Want(s.combat_no_copy);
     colony::SetMode(s.colony_monthly_batch);
     jobs::SetEnabled(s.pop_jobs_single_pass);
+    ai::SetEnabled(s.ai_parallel_lpt);
+    ai::SetNestedInline(s.ai_nested_inline);
+    weight::SetEnabled(s.ai_weight_cache);
     render::SetFps(s.tick_render_fps);
     ui::SetProbe(s.ui_probe);
     ui::SetCapAll(s.render_cap_between_ticks);
@@ -1643,7 +1685,7 @@ std::string StatsLine() {
            one("flag_simd(hits=static misses=dynamic bypass=unreadable)", g_flag_stats, g_flag_mode.load() != 0) +
            " mismatches=" + std::to_string(g_flag_mismatch.load()) + " | " +
            one("flag_expiry_skip(hits=skipped)", g_expiry_stats, g_expiry_skip.load()) +
-           " | tick_render_fps=" + (render::Installed() ? std::to_string(render::Dropped()) + " dropped / " + std::to_string(render::Passed()) + " drawn" : std::string("unavailable")) + " | combat_no_copy=" + (combat::Patched() ? "on" : (combat::Installed() ? "off" : "unavailable")) + " | " + colony::Stats() + " | " + jobs::Stats() + " | " + AllocStats() + " | " + phase::Summary() + " | " + FlushStats() + " | " + ScopeStats() +
+           " | tick_render_fps=" + (render::Installed() ? std::to_string(render::Dropped()) + " dropped / " + std::to_string(render::Passed()) + " drawn" : std::string("unavailable")) + " | combat_no_copy=" + (combat::Patched() ? "on" : (combat::Installed() ? "off" : "unavailable")) + " | " + colony::Stats() + " | " + jobs::Stats() + " | " + ai::Stats() + " | " + weight::Stats() + " | " + AllocStats() + " | " + phase::Summary() + " | " + FlushStats() + " | " + ScopeStats() +
            " | gen=" + std::to_string(g_gen.load()) + prof;
 }
 

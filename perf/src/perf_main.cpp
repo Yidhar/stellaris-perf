@@ -107,6 +107,9 @@ perf::Settings ReadIni(const std::wstring& path) {
     s.combat_no_copy = GetPrivateProfileIntW(L"perf", L"combat_no_copy", 1, p) != 0;
     s.colony_monthly_batch = GetPrivateProfileIntW(L"perf", L"colony_monthly_batch", 2, p);
     s.pop_jobs_single_pass = GetPrivateProfileIntW(L"perf", L"pop_jobs_single_pass", 1, p) != 0;
+    s.ai_parallel_lpt = GetPrivateProfileIntW(L"perf", L"ai_parallel_lpt", 0, p) != 0;
+    s.ai_weight_cache = GetPrivateProfileIntW(L"perf", L"ai_weight_cache", 1, p) != 0;
+    s.ai_nested_inline = GetPrivateProfileIntW(L"perf", L"ai_nested_inline", 0, p) != 0;
     s.tick_render_fps = GetPrivateProfileIntW(L"perf", L"tick_render_fps", 10, p);
     s.ui_probe = GetPrivateProfileIntW(L"perf", L"ui_probe", 0, p) != 0;
     s.render_cap_between_ticks = GetPrivateProfileIntW(L"perf", L"render_cap_between_ticks", 1, p) != 0;

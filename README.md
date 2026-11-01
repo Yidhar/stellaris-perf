@@ -127,6 +127,40 @@ are off pass straight through to the engine.
   first pass takes 64 ms of a month start and the second 32 ms (`phase_callers`); measured in one run with the
   setting alternating from month start to month start (36 month starts), the month-start monthly update is 346 ms
   off and 310 ms on (medians 336 / 298; see [`bench/RESULTS.md`](bench/RESULTS.md)).
+- **The daily AI update's countries heaviest first** (`ai_parallel_lpt`, experimental, off). `UpdateAIParallel` is a
+  parallel-for over the `CCountryAI` array: its tasks take the countries one by one from a shared counter, in array
+  order, and the main thread takes its share and then waits for the last task. With this on the plugin's hook of the
+  per-country update processes, when the parallel-for reaches array slot i, the country that ranks i-th by the cost
+  measured the day before (longest-processing-time order); every country is still updated exactly once per phase, and
+  the update neither draws random numbers nor touches shared game state (the engine forbids both during the phase),
+  so the result does not depend on the order. Measured: no gain, because on a late save the phase *is* the heaviest
+  country's update: 78 countries, 16 in flight at once, all per-country updates together 58 ms but one empire's 18 ms
+  alone, and that one is taken in the first wave either way (see [`bench/RESULTS.md`](bench/RESULTS.md)). The
+  per-country measurement stays on: the stats line shows the phase against its heaviest country.
+- **Scripted weights memoised within one AI phase** (`ai_weight_cache`). The AI's choices (ship design components,
+  buildings and districts, techs, resolutions, operations) are scored by scripted weights (`ai_weight`, `weight`,
+  `ai_will_do`: a base and modifiers with triggers), all evaluated by `CMeanTimeToHappen::GetRawFactor(weight, out,
+  scope)`. One ship design alone evaluates every candidate component's weight for every slot it could go into, twice
+  (`AddSectionComponentsToShipDesign` runs the weapon and utility passes twice per growth stage, then upgrades), so
+  the same (weight, scope) pair is evaluated many times in one country's update, and the heaviest empire's update spends
+  about a tenth of its time there. During the parallel AI phase the game state does not change (the engine closes
+  global state access and forbids random numbers), so the pair gives the same factor all phase long. With this on,
+  each thread keeps a table of (weight, scope identity: the self, from, root and prev objects) → factor for the phase
+  in progress and answers repeats from it; scopes with parameters or saved event targets are not cached, and the
+  table is used only inside a country's update of the phase (the player's designer, tooltips and events evaluate as
+  before). Same results. Measured on a late save (36 months, the setting alternating monthly): 90.6 % of the 2,600
+  weight evaluations a phase makes are repeats, and the daily AI phase goes from 15.5 to 15.4 ms (medians 13.5 /
+  13.2, 90th percentile 28.7 / 27.0): small, because the repeats are few; the component choosers' own loops cost more
+  than the weights (see [`bench/RESULTS.md`](bench/RESULTS.md)).
+- **Nested parallel-fors of the AI update run inline** (`ai_nested_inline`, experimental, off). Parts of a country's
+  AI update (the economic forecast among them) start a parallel-for of their own from the worker thread that runs the
+  country, about 36 per phase on a late save; its tasks go to the scheduler where the other workers are busy with
+  their own countries, and the forking thread spin-waits for them (5 % of the heaviest empire's update in the sampled
+  profile). With this on the plugin's hook of the parallel-for descriptor's constructor sets the task count of a
+  descriptor built inside a country's update to one, so the engine takes its own serial path and the thread runs the
+  whole range itself; same results, a parallel-for's chunks are independent of each other and of the thread. Measured
+  on a late save (36 months, alternating monthly): the daily AI phase 15.58 ms off, 15.54 ms on (medians 14.4 / 14.1,
+  90th percentile 27.4 / 26.6), within noise; the work the thread now does itself replaces the wait almost one for one.
 
 - **Frame cap inside ticks** (`tick_render_fps`, default 10). With frame smoothing on, the engine draws a frame from inside
   the simulation whenever its refresh-rate based timer says one is due; on a high-refresh monitor that is up to the
@@ -206,6 +240,9 @@ clones.
 | `combat_no_copy` | `1` | share the combat participants table's object instead of copying it per ship |
 | `colony_monthly_batch` | `2` | colony monthly pass: `1` forced refreshes once at the end, flush held; `2` also the colony's node frozen during its pass |
 | `pop_jobs_single_pass` | `1` | monthly pop-job assignment once instead of twice (the engine's second call is one more iteration over the first's result) |
+| `ai_parallel_lpt` | `0` | experimental: daily AI update with the countries processed heaviest first; measured no gain |
+| `ai_weight_cache` | `1` | scripted weight factors memoised per (weight, scope) within one daily AI phase |
+| `ai_nested_inline` | `0` | experimental: a parallel-for started inside a country's AI update runs on that thread; measured within noise |
 | `tick_render_fps` | `10` | most frames per second drawn in the middle of a tick (`0` = the game's own rate) |
 | `render_cap_between_ticks` | `1` | the same cap for the frames drawn between ticks, while the simulation runs |
 | `fleet_manager_cache` | `1` | cache fleet military power in the fleet manager window |

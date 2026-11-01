@@ -10,6 +10,20 @@ namespace perf {
 void SetLogDirectory(const std::wstring& dir);
 std::wstring LogDirectory();
 void Log(const char* fmt, ...);
+struct SharedStats;
+SharedStats* Shared();  // the published statistics (perf_shared.hpp), null before Install or after Uninstall
+
+// The identity of a CEventScope for caches keyed by it: the self, from, root and prev slots (object type, id and
+// local object pointer each). False when the scope carries parameters or saved event targets (a script may read them)
+// or a read faults. The layout is the one the rule cache uses (perf_tweaks.cpp).
+struct ScopeKey {
+    uint64_t type[4];
+    uint64_t local[4];
+    uint32_t id[4];
+};
+bool BuildScopeKey(const void* scope, ScopeKey* key);
+// A zeroed per-thread table of the given size, freed by Uninstall once no detour runs any more.
+void* RegisterTable(size_t bytes);
 
 // Runtime performance tweaks (config\stellaris_perf.ini of the plugin folder):
 //  * frame_smoothing: the engine global g_bFrameSmoothing (the `smooth` console command). When on,
@@ -62,6 +76,17 @@ struct Settings {
     // Monthly pop-job assignment once instead of twice: the engine's second UpdatePopJobs call, one more iteration
     // over the first's result, is skipped (perf_jobs.hpp)
     bool pop_jobs_single_pass = true;
+    // Daily AI update: the countries processed heaviest first (by the cost measured the day before) (perf_ai.hpp).
+    // Measured: no gain, the phase is the heaviest country's own update, which starts first anyway; off. The
+    // per-country measurement in the stats line is on regardless.
+    bool ai_parallel_lpt = false;
+    // Daily AI update: scripted weight factors (ai_weight and the like) memoised per (weight, scope) within one phase
+    // (perf_weight.hpp); same results
+    bool ai_weight_cache = true;
+    // Daily AI update: a parallel-for started inside a country's update runs on that thread instead of forking tasks
+    // the other busy workers do not take (perf_ai.hpp); same results. Measured: within noise (the inlined work
+    // replaces the wait one for one), so off.
+    bool ai_nested_inline = false;
     // Frame rate cap for frames drawn in the middle of a tick (frame smoothing); 0 = the game's own rate (perf_render.hpp)
     int tick_render_fps = 10;
     // Logs how often the engine's frame function runs against the ticks (perf_ui.hpp); measurement only

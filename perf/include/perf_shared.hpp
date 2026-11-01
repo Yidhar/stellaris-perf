@@ -41,6 +41,12 @@ struct SharedStats {
     uint64_t alloc_evictions;
     uint64_t alloc_rejects;
     uint64_t alloc_cached_bytes;
+    // the daily AI update's heaviest country (by the cost measured the day before): the thread updating it and
+    // whether that update is running right now, for a sampling profiler outside the game (perf_ai.hpp)
+    uint32_t ai_heavy_tid;
+    uint32_t ai_heavy_active;
+    uint32_t ai_heavy_country;  // its index in the CCountryAI array
+    uint32_t ai_heavy_pad;
 };
 #pragma pack(pop)
 
