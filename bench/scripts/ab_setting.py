@@ -28,12 +28,13 @@ k32.OpenProcess.restype = w.HANDLE
 KEYS = ("frame_smoothing", "opinion_cache", "rule_cache", "fleet_manager_cache", "fleet_manager_reinforce_ms", "flag_simd",
         "flag_expiry_skip", "profile", "rule_profile", "modifier_flush", "modifier_flush_max", "fleet_parallel_grain1",
         "scope_profile", "alloc_cache", "alloc_cache_mb", "combat_no_copy", "colony_monthly_batch", "pop_jobs_single_pass",
-        "pop_faction_batch", "ai_parallel_lpt", "ai_weight_cache", "ai_nested_inline", "save_fast_format", "save_fast_writer", "tick_render_fps", "ui_probe",
-        "render_cap_between_ticks", "phase_profile")
+        "pop_faction_batch", "pop_jobs_node_batch", "ai_parallel_lpt", "ai_weight_cache", "ai_nested_inline", "save_fast_format", "save_fast_writer",
+        "tick_render_fps", "ui_probe", "render_cap_between_ticks", "phase_profile")
 DEFAULTS = {"frame_smoothing": -1, "opinion_cache": 0, "rule_cache": 0, "fleet_manager_cache": 1,
             "fleet_manager_reinforce_ms": 1000, "flag_simd": 1, "flag_expiry_skip": 1, "profile": 0, "rule_profile": 0,
             "modifier_flush": 0, "modifier_flush_max": 32, "fleet_parallel_grain1": 1, "scope_profile": 0, "alloc_cache": 1,
-            "alloc_cache_mb": 8, "combat_no_copy": 1, "colony_monthly_batch": 2, "pop_jobs_single_pass": 1, "pop_faction_batch": 2, "ai_parallel_lpt": 0,
+            "alloc_cache_mb": 8, "combat_no_copy": 1, "colony_monthly_batch": 2, "pop_jobs_single_pass": 1, "pop_faction_batch": 2, "pop_jobs_node_batch": 2,
+            "ai_parallel_lpt": 0,
             "ai_weight_cache": 1, "ai_nested_inline": 0, "save_fast_format": 1, "save_fast_writer": 1, "tick_render_fps": 10,
             "ui_probe": 0, "render_cap_between_ticks": 1, "phase_profile": 0}
 

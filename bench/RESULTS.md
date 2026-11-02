@@ -233,6 +233,29 @@ autosave months all on `1` in that cycle) and 345.0 ms off, 334.8 ms with `2` (m
 cycle `2,0,0,2` splits the autosaves). The phase measurement is noisy (a month start varies by 40 ms); the pass timer
 is the precise number. Default `2`.
 
+**`pop_jobs_node_batch`.** The promotion loop at the end of each pass (0xB35F30) has
+`CColony::AccessOrAddPopGroupMoveSizeFrom` inlined: a move into an existing group is `CPopGroup::MoveSizeFrom` alone,
+a move into a new group is followed by `CModifierNodeBase::Update` of the source group's node and of the new group's
+(0xB364C1 / 0xB364CA; `Update` returns at once when the node's dirty byte at +0x108 is clear, so these are forced
+rebuilds, not checks). In the pass samples that edge is 9.9 % of the first pass, and 52 % of it is the chain group
+rebuild → inherit parent → `Update` of the colony's node → its rebuild (0xDAD840) → the planet's (0xE04060): both are
+dirty at every new group, because a group's rebuild invalidates them again (with a mask that leaves the groups
+clean: at the end of a pass all 4,808 group nodes refreshed were still clean). The refreshes are deferred through
+`perf_colony`'s hook of `Update` (the return address names the site) in a window `perf_jobs` opens around each pass.
+Replaying them once each at the end of the pass (mode `1`) gains nothing: 5.9 ms of replay against the engine's 6.1 ms,
+pass 48.6 against 49.8 ms. Mode `3` skips them like `2` and watches the nodes until the next pass: of 4,918 deferred
+calls over 18 passes, 36 % of the nodes were rebuilt on demand inside the monthly update, 6 % outside it, 10 % by the
+modifier manager's flush (clean at the next pass with no rebuild seen), and 48 % were still dirty at the next pass,
+never read in the month (the source groups emptied by a whole-group promotion, flagged dead by
+`CColony::RemovePopGroup`, and groups nobody consults); the rebuilds on demand take 2.3 ms per month start, against the
+6.1 ms the engine's refreshes took (the colony and planet are mostly clean by then). From the same load: the first
+pass 49.8 ms with the engine's refreshes (267 calls per pass, 6.1 ms; 18 passes), 42.4 ms in mode `3` (18) and
+41.4 ms in mode `2` (26). 36 months alternating monthly, cycle `2,0,0,2`
+([`pop_jobs_node_batch2_interleave_36m.json`](data/phases-late-4.5.2/pop_jobs_node_batch2_interleave_36m.json)): the
+month-start monthly update 301.3 ms off, 295.8 ms on (medians 297.7 / 299.6; 15 / 15 regular month starts), all
+month starts 301.9 / 292.4 (medians 295.4 / 290.5): a 5 ms effect is inside that measurement's noise, the pass timer
+and the reader timing are the numbers. Default `2`.
+
 **The daily AI phase is one country's update (`ai_parallel_lpt`: no gain).** `UpdateAIParallel` (0xB86900) is a
 parallel-for over the `CCountryAI` array (78 entries on the late save): tasks take entries one by one from a shared
 counter and call vtable slot 7 (0xB6EF20: skips countries without an AI, 34 of the 78, then the base update, which runs

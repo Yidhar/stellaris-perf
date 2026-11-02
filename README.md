@@ -141,6 +141,23 @@ are off pass straight through to the engine.
   see the values from before it. Measured on the late save: the first pop-job pass 69 ms with the engine's calls,
   57 ms with `1`, 51 ms with `2` (the recomputation then takes 3 ms at the end of the monthly update); over 36 months
   alternating monthly, the month-start monthly update 345 ms off and 335 ms on with `2` (medians 326 / 313).
+- **No forced modifier refresh for the pop groups a promotion creates** (`pop_jobs_node_batch`, default `2`). When
+  the pop-job pass promotes pops into a group that does not exist yet, the engine creates the group, moves the pops
+  and then refreshes two modifier nodes at once, the source group's and the new group's (`CModifierNodeBase::Update`,
+  which the next reader of a dirty node would run anyway). Each refresh rebuilds the colony's and the planet's node
+  first, and a group's rebuild makes them dirty again, so every new group costs those two rebuilds (scripted
+  triggers): on a late save 134 new groups per pass, 6 ms of a 50 ms pass. Nothing in the rest of the pass reads a
+  pop group's node (the promotions decide by precomputed category flags), and watched over the month that follows,
+  half of the nodes refreshed are never read before the next pass (the source groups emptied by a whole-group
+  promotion, which are dead from then on, and groups nobody consults), a tenth are rebuilt by the modifier manager's
+  flush, the rest on demand by a reader inside the monthly update. With this on the two refreshes are skipped and the
+  nodes left dirty for their next reader, as any node the engine invalidates; deterministic. `1` instead rebuilds the
+  nodes once each when the pass ends (the same values, from the pass's final state), which measures no gain because
+  the colony and planet rebuilds repeat; `3` is `2` plus the statistics of who rebuilds the nodes later. Measured on
+  the late save from the same load: the first pop-job pass 49.8 ms with the engine's refreshes, 41.4 ms without, and
+  the readers that rebuild the nodes later take 2.3 ms per month; over 36 months alternating monthly, the month-start
+  monthly update 301 ms off and 296 ms on (medians 298 / 300: within the noise of that measurement, see
+  [`bench/RESULTS.md`](bench/RESULTS.md)).
 - **The daily AI update's countries heaviest first** (`ai_parallel_lpt`, experimental, off). `UpdateAIParallel` is a
   parallel-for over the `CCountryAI` array: its tasks take the countries one by one from a shared counter, in array
   order, and the main thread takes its share and then waits for the last task. With this on the plugin's hook of the
@@ -280,6 +297,7 @@ clones.
 | `colony_monthly_batch` | `2` | colony monthly pass: `1` forced refreshes once at the end, flush held; `2` also the colony's node frozen during its pass |
 | `pop_jobs_single_pass` | `1` | monthly pop-job assignment once instead of twice (the engine's second call is one more iteration over the first's result) |
 | `pop_faction_batch` | `2` | a faction's support and approval recomputed once per faction at the end of a window instead of after every pop move in it: `1` each pop-job pass, `2` the whole monthly colony update; `0` the engine's calls; `3` / `4` verify |
+| `pop_jobs_node_batch` | `2` | the two modifier refreshes forced for every pop group a promotion creates: `2` skipped, the nodes left to their next reader; `1` done once each when the pass ends (no gain); `0` the engine's; `3` measurement |
 | `ai_parallel_lpt` | `0` | experimental: daily AI update with the countries processed heaviest first; measured no gain |
 | `ai_weight_cache` | `1` | scripted weight factors memoised per (weight, scope) within one daily AI phase |
 | `ai_nested_inline` | `0` | experimental: a parallel-for started inside a country's AI update runs on that thread; measured within noise |

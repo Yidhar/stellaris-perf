@@ -108,6 +108,7 @@ perf::Settings ReadIni(const std::wstring& path) {
     s.colony_monthly_batch = GetPrivateProfileIntW(L"perf", L"colony_monthly_batch", 2, p);
     s.pop_jobs_single_pass = GetPrivateProfileIntW(L"perf", L"pop_jobs_single_pass", 1, p) != 0;
     s.pop_faction_batch = GetPrivateProfileIntW(L"perf", L"pop_faction_batch", 2, p);
+    s.pop_jobs_node_batch = GetPrivateProfileIntW(L"perf", L"pop_jobs_node_batch", 2, p);
     s.ai_parallel_lpt = GetPrivateProfileIntW(L"perf", L"ai_parallel_lpt", 0, p) != 0;
     s.ai_weight_cache = GetPrivateProfileIntW(L"perf", L"ai_weight_cache", 1, p) != 0;
     s.ai_nested_inline = GetPrivateProfileIntW(L"perf", L"ai_nested_inline", 0, p) != 0;

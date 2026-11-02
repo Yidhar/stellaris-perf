@@ -80,6 +80,10 @@ struct Settings {
     // after every pop move inside it (perf_jobs.hpp); 0 = the engine's calls, 1 = each pop-job pass, 2 = the whole
     // monthly colony update, 3 / 4 = verify (the engine's calls, then a check from the final state over the window of 1 / 2)
     int pop_faction_batch = 2;
+    // Monthly pop-job pass: the two modifier refreshes the engine forces for every pop group a promotion creates
+    // (perf_colony.hpp); 2 = left to the node's next reader, 1 = done once per node when the pass ends (no gain),
+    // 0 = the engine's refreshes, 3 = measurement
+    int pop_jobs_node_batch = 2;
     // Daily AI update: the countries processed heaviest first (by the cost measured the day before) (perf_ai.hpp).
     // Measured: no gain, the phase is the heaviest country's own update, which starts first anyway; off. The
     // per-country measurement in the stats line is on regardless.

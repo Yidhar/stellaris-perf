@@ -1,4 +1,5 @@
 #include "perf_jobs.hpp"
+#include "perf_colony.hpp"
 #include "perf_shared.hpp"
 #include "perf_tweaks.hpp"
 #include "MinHook.h"
@@ -170,9 +171,11 @@ uint64_t Detour(void* a, void* b, void* c, void* d, uint64_t e, uint64_t f, uint
     }
     // a window over the pass (inside the monthly window of mode 2 it only nests: that one flushes at its end)
     if (g_faction_installed) BeginWindow(g_faction_mode.load(std::memory_order_relaxed));
+    colony::BeginJobsPass();  // pop_jobs_node_batch: the refreshes of the groups the pass creates
     const uint64_t t0 = Now();
     const uint64_t r = g_orig(a, b, c, d, e, f, g, h);
-    if (g_faction_installed) EndWindow();
+    if (g_faction_installed) EndWindow();  // first: a faction's approval change invalidates its member groups
+    colony::EndJobsPass();
     const uint64_t us = (uint64_t)((double)(Now() - t0) * g_qpc_us);
     if (shared) InterlockedExchange((volatile LONG*)&shared->jobs_active, 0);
     if (kind == 1) {

@@ -33,4 +33,15 @@ bool HoldFlush();
 bool Installed();
 std::string Stats();
 
+// pop_jobs_node_batch: the two modifier refreshes the monthly pop-job pass forces for every pop group its promotions
+// create (the source group's node and the new group's, each rebuilding the colony's and the planet's node first,
+// dirty again at every one of them) skipped inside the pass. 2 = the nodes left dirty for their next reader, like any
+// node the engine invalidates (the default; half of them are never read again before the next pass); 1 = the nodes
+// rebuilt once each when the pass ends (the same values, from the pass's final state; no gain, the colony and planet
+// rebuilds repeat); 0 = the engine's refreshes, counted; 3 = 2 with the nodes watched for who rebuilds them (stats).
+// perf_jobs opens the pass around every UpdatePopJobs call (main thread).
+void SetJobsMode(int mode);
+void BeginJobsPass();
+void EndJobsPass();
+
 }  // namespace perf::colony
