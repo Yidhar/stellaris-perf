@@ -50,6 +50,13 @@ struct SharedStats {
     // the thread serializing a save (CSaveGameTaskManager::CreateMemoryFiles) and whether it is doing so right now
     uint32_t save_tid;
     uint32_t save_active;
+    // the thread running the monthly pop-job assignment (NPlanetJobs::UpdatePopJobs, the first pass) and whether it
+    // is doing so right now (perf_jobs.hpp)
+    uint32_t jobs_tid;
+    uint32_t jobs_active;
+    // the thread running CGameState::MonthlyUpdate (the month start) and whether it is doing so right now
+    uint32_t monthly_tid;
+    uint32_t monthly_active;
 };
 #pragma pack(pop)
 

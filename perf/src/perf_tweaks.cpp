@@ -1525,6 +1525,7 @@ void Apply(const Settings& s) {
     combat::Want(s.combat_no_copy);
     colony::SetMode(s.colony_monthly_batch);
     jobs::SetEnabled(s.pop_jobs_single_pass);
+    jobs::SetFactionMode(s.pop_faction_batch);
     ai::SetEnabled(s.ai_parallel_lpt);
     ai::SetNestedInline(s.ai_nested_inline);
     weight::SetEnabled(s.ai_weight_cache);

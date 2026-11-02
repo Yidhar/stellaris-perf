@@ -127,6 +127,20 @@ are off pass straight through to the engine.
   first pass takes 64 ms of a month start and the second 32 ms (`phase_callers`); measured in one run with the
   setting alternating from month start to month start (36 month starts), the month-start monthly update is 346 ms
   off and 310 ms on (medians 336 / 298; see [`bench/RESULTS.md`](bench/RESULTS.md)).
+- **Faction support and approval once per month start** (`pop_faction_batch`, default `2`). Every time pops move
+  between groups (the collapses and promotions of the pop-job pass, growth, migration), the engine runs
+  `CPopFaction::UpdateSupportAndApproval` for every faction the group belongs to: `CalcSupport`, then `CalcApproval`
+  over the faction type's scripted demands (triggers), then the member groups invalidated when the approval changed.
+  On a late save that is 325 calls in one pop-job pass for 55 factions, 19 % of the pass; nothing in the window reads
+  a faction's support or approval (the promotion loop decides by precomputed category flags, the job scripts and the
+  growth and migration code do not read factions). With this on the calls inside a window are recorded and run once
+  per faction when it ends: `1` the window is each pop-job pass, `2` the whole monthly colony update. The values are
+  those of the same final state (verify modes `3` / `4` run the engine's calls and then check every touched faction
+  against a recomputation from the final state: 0 mismatches in 1,400 checks); a faction whose values changed and
+  changed back inside the window is not invalidated then, and a mod script that read them inside the window would
+  see the values from before it. Measured on the late save: the first pop-job pass 69 ms with the engine's calls,
+  57 ms with `1`, 51 ms with `2` (the recomputation then takes 3 ms at the end of the monthly update); over 36 months
+  alternating monthly, the month-start monthly update 345 ms off and 335 ms on with `2` (medians 326 / 313).
 - **The daily AI update's countries heaviest first** (`ai_parallel_lpt`, experimental, off). `UpdateAIParallel` is a
   parallel-for over the `CCountryAI` array: its tasks take the countries one by one from a shared counter, in array
   order, and the main thread takes its share and then waits for the last task. With this on the plugin's hook of the
@@ -265,6 +279,7 @@ clones.
 | `combat_no_copy` | `1` | share the combat participants table's object instead of copying it per ship |
 | `colony_monthly_batch` | `2` | colony monthly pass: `1` forced refreshes once at the end, flush held; `2` also the colony's node frozen during its pass |
 | `pop_jobs_single_pass` | `1` | monthly pop-job assignment once instead of twice (the engine's second call is one more iteration over the first's result) |
+| `pop_faction_batch` | `2` | a faction's support and approval recomputed once per faction at the end of a window instead of after every pop move in it: `1` each pop-job pass, `2` the whole monthly colony update; `0` the engine's calls; `3` / `4` verify |
 | `ai_parallel_lpt` | `0` | experimental: daily AI update with the countries processed heaviest first; measured no gain |
 | `ai_weight_cache` | `1` | scripted weight factors memoised per (weight, scope) within one daily AI phase |
 | `ai_nested_inline` | `0` | experimental: a parallel-for started inside a country's AI update runs on that thread; measured within noise |

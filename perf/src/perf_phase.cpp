@@ -163,6 +163,12 @@ uint64_t Detour(void* a, void* b, void* c, void* d, uint64_t e, uint64_t f, uint
             InterlockedExchange((volatile LONG*)&shared->save_active, 1);
         }
     }
+    if constexpr (P == kMonthly) {  // the month start's window, likewise
+        if ((shared = Shared()) != nullptr) {
+            shared->monthly_tid = GetCurrentThreadId();
+            InterlockedExchange((volatile LONG*)&shared->monthly_active, 1);
+        }
+    }
     uint64_t r;
     if (P == g_caller_slot.load(std::memory_order_relaxed)) {
         // the hook jumps here from the function's entry, so the return address is the caller's call site
@@ -180,6 +186,9 @@ uint64_t Detour(void* a, void* b, void* c, void* d, uint64_t e, uint64_t f, uint
     }
     if constexpr (P == kSave) {
         if (shared) InterlockedExchange((volatile LONG*)&shared->save_active, 0);
+    }
+    if constexpr (P == kMonthly) {
+        if (shared) InterlockedExchange((volatile LONG*)&shared->monthly_active, 0);
     }
     return r;
 }

@@ -126,14 +126,14 @@ class Bench:
 
 
 # perf_shared.hpp: SharedStats
-PERF_STATS_FMT = "<IIQiiiiiiiiQQQQQQQQQQQQQQQQIIIIII"
+PERF_STATS_FMT = "<IIQiiiiiiiiQQQQQQQQQQQQQQQQIIIIIIIIII"
 PERF_STATS_FIELDS = ("magic", "size", "applied_seq", "frame_smoothing", "opinion_cache", "rule_cache",
                      "fleet_manager_cache", "fleet_manager_reinforce_ms", "flag_simd", "flag_expiry_skip", "fleet_parallel_grain1",
                      "fleet_manager_updates", "reinforce_skipped", "reinforce_passed", "fleet_power_hits",
                      "fleet_power_misses", "flag_static", "flag_dynamic", "flag_unreadable", "flag_mismatch",
                      "expiry_skipped", "expiry_passed", "alloc_hits", "alloc_misses", "alloc_evictions",
                      "alloc_rejects", "alloc_cached_bytes", "ai_heavy_tid", "ai_heavy_active", "ai_heavy_country", "ai_heavy_pad",
-                     "save_tid", "save_active")
+                     "save_tid", "save_active", "jobs_tid", "jobs_active", "monthly_tid", "monthly_active")
 PERF_MAGIC = 0x31465250
 
 
@@ -155,7 +155,7 @@ class PerfStats:
 def write_perf_ini(frame_smoothing=-1, opinion_cache=0, rule_cache=0, fleet_manager_cache=0,
                    fleet_manager_reinforce_ms=0, flag_simd=0, flag_expiry_skip=0, profile=0, rule_profile=0,
                    modifier_flush=0, modifier_flush_max=32, fleet_parallel_grain1=0,
-                   scope_profile=0, alloc_cache=0, alloc_cache_mb=8, combat_no_copy=0, colony_monthly_batch=0, pop_jobs_single_pass=0,
+                   scope_profile=0, alloc_cache=0, alloc_cache_mb=8, combat_no_copy=0, colony_monthly_batch=0, pop_jobs_single_pass=0, pop_faction_batch=0,
                    ai_parallel_lpt=0, ai_weight_cache=0, ai_nested_inline=0, save_fast_format=0, save_fast_writer=0, tick_render_fps=0, ui_probe=0,
                    render_cap_between_ticks=0, phase_profile=0, phase_extra="", phase_callers=""):
     os.makedirs(os.path.dirname(PERF_INI), exist_ok=True)
@@ -179,6 +179,7 @@ def write_perf_ini(frame_smoothing=-1, opinion_cache=0, rule_cache=0, fleet_mana
                 f"combat_no_copy={combat_no_copy}\n"
                 f"colony_monthly_batch={colony_monthly_batch}\n"
                 f"pop_jobs_single_pass={pop_jobs_single_pass}\n"
+                f"pop_faction_batch={pop_faction_batch}\n"
                 f"ai_parallel_lpt={ai_parallel_lpt}\n"
                 f"ai_weight_cache={ai_weight_cache}\n"
                 f"ai_nested_inline={ai_nested_inline}\n"

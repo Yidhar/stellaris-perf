@@ -197,6 +197,42 @@ to month start (36 month starts,
 update 346.0 ms off, 309.5 ms on (medians 335.8 / 298.0), -36 ms or -11 % of the month-start monthly update, about
 -1.2 ms per day averaged; 18 second passes skipped, no error.
 
+**The first pop-job pass, sampled.** The plugin flags the pass's window in its shared statistics (`jobs_tid` /
+`jobs_active`; the month start likewise as `monthly_*`) and the sampler outside the game takes the main thread
+(`sample_thread.py ... jobs`; 17 month starts, 2,123 samples; the pass 73 ms by the plugin's own timer). Of the pass:
+the promotion tail of `AssignPopsToJobs` (0xB35F30) 47 %, of which `CPopGroup::MoveSizeFrom` 24 %, the creation of
+the new groups 11 % and their two synchronous node updates 10 %; the assignment body (0xB36CC0) 27.5 %, of which the
+assignment and checksum loop with the country invalidation cascade 10 %, the parallel weight phase 6 %, the sort 3 %;
+the `UpdateModifier` loop at the start 14 % (the colony nodes are dirty again after the monthly colony pass: a
+country-level invalidation late in it dirties every colony); the precalc flags, `UpdateAvailableJobs` and
+`BuildUpdateData` 10 %. Across all of it, the scripted trigger evaluation of the modifier updates (triggered modifiers)
+34 %, and `CPopFaction::UpdateSupportAndApproval` 19 %: every move of pops between groups runs it for each faction the
+group belongs to (`AddStat<CFactionsStat>` and `ValidateStats` in `MoveSizeFrom`), `CalcSupport` then `CalcApproval`
+over the faction type's demands (scripted triggers), then the member groups invalidated when the approval changed.
+Over the whole month start (`CGameState::MonthlyUpdate`, 20 month starts, 14,840 samples): `NColonyUpdate::MonthlyUpdate`
+61 % (the colony pass 34.5 %, the pop-job pass 18 %, the parallel colony phase 7 %), spin-waits on parallel jobs 12 %,
+on_action events 7.5 %, the faction recomputation 6 %, scripted trigger evaluation 32 % in all.
+
+**`pop_faction_batch`.** `CPopFaction::UpdateSupportAndApproval` (0x699D60) is hooked; inside a window its calls are
+recorded per faction and run once each when the window ends, in order of first appearance: `1` the window is each
+pass of `UpdatePopJobs`, `2` the whole `NColonyUpdate::MonthlyUpdate` (0xE3BFA0, hooked for the window; growth,
+migration, decline, assembly, the passes). Nothing in either window reads a faction's support or approval: the
+promotion loop decides by precomputed category flags, the job scripts and the growth and migration code do not read
+factions, the factions' own monthly update and the vanilla `on_pop_growth` / `on_pop_assembly` / `on_pop_group_added`
+events do not either. The values are those of the same final state; what differs is that a faction whose values
+changed and changed back inside the window is not invalidated or flagged then, and a mod script reading them inside
+the window would see the values from before it. Verify modes `3` / `4` run the engine's calls and at the end of the
+window of `1` / `2` recompute every touched faction from the final state and compare the stored 24 bytes: 547 checks
+over 10 passes and 869 over 15 month starts, 0 mismatches. On the late save a pass has 325 calls for 55 factions, a
+month start 404 for 58; the engine's calls take 14 ms per pass. By the plugin's pass timer the first pass is 69 ms
+with the engine's calls, 57 ms with `1`, 51 ms with `2` (the recomputation then 2.8 ms at the end of the monthly
+update). 36 months alternating monthly ([`pop_faction_batch1_interleave_36m.json`](data/phases-late-4.5.2/pop_faction_batch1_interleave_36m.json),
+[`pop_faction_batch2_interleave_36m.json`](data/phases-late-4.5.2/pop_faction_batch2_interleave_36m.json)): the
+month-start monthly update 338.4 ms off, 319.6 ms with `1` (medians 338.2 / 325.8; 18 / 12 regular month starts, the
+autosave months all on `1` in that cycle) and 345.0 ms off, 334.8 ms with `2` (medians 326.0 / 312.7; 15 / 15, the
+cycle `2,0,0,2` splits the autosaves). The phase measurement is noisy (a month start varies by 40 ms); the pass timer
+is the precise number. Default `2`.
+
 **The daily AI phase is one country's update (`ai_parallel_lpt`: no gain).** `UpdateAIParallel` (0xB86900) is a
 parallel-for over the `CCountryAI` array (78 entries on the late save): tasks take entries one by one from a shared
 counter and call vtable slot 7 (0xB6EF20: skips countries without an AI, 34 of the 78, then the base update, which runs

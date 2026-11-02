@@ -76,6 +76,10 @@ struct Settings {
     // Monthly pop-job assignment once instead of twice: the engine's second UpdatePopJobs call, one more iteration
     // over the first's result, is skipped (perf_jobs.hpp)
     bool pop_jobs_single_pass = true;
+    // Month start: a faction's support and approval recomputed once per faction at the end of a window instead of
+    // after every pop move inside it (perf_jobs.hpp); 0 = the engine's calls, 1 = each pop-job pass, 2 = the whole
+    // monthly colony update, 3 / 4 = verify (the engine's calls, then a check from the final state over the window of 1 / 2)
+    int pop_faction_batch = 2;
     // Daily AI update: the countries processed heaviest first (by the cost measured the day before) (perf_ai.hpp).
     // Measured: no gain, the phase is the heaviest country's own update, which starts first anyway; off. The
     // per-country measurement in the stats line is on regardless.
