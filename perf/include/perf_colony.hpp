@@ -43,5 +43,9 @@ std::string Stats();
 void SetJobsMode(int mode);
 void BeginJobsPass();
 void EndJobsPass();
+// pop_jobs_flush_first: the loop at the start of each pass that refreshes every colony's node (serial) is timed, and
+// skipped when asked (the pass's readers rebuild the nodes on demand). False when the loop's call was not found.
+bool SetJobsColonySkip(bool skip);
+void JobsColonyLoopStats(uint64_t* calls, uint64_t* us, uint64_t* skipped);
 
 }  // namespace perf::colony

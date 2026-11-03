@@ -57,6 +57,10 @@ struct SharedStats {
     // the thread running CGameState::MonthlyUpdate (the month start) and whether it is doing so right now
     uint32_t monthly_tid;
     uint32_t monthly_active;
+    // the thread running the modifier manager flush (CModifierNodeManager::Update) and whether one runs right now
+    // (perf_nodes.hpp, published only while node_trace is on)
+    uint32_t flush_tid;
+    uint32_t flush_active;
 };
 #pragma pack(pop)
 

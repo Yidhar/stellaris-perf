@@ -1,4 +1,5 @@
 #include "perf_colony.hpp"
+#include "perf_nodes.hpp"
 #include "perf_shared.hpp"
 #include "perf_tweaks.hpp"
 #include "MinHook.h"
@@ -68,6 +69,24 @@ constexpr int kMaxPending = 64;  // skipped pop-group refreshes per pass; beyond
 //      manager's flush; unread = still dirty at the next pass).
 constexpr uintptr_t kJobsUpdateCalls[] = { 0xB364C1, 0xB364CA };
 constexpr int kJobsSites = 2;
+// pop_jobs_flush_first (experimental, off): the loop at the start of UpdatePopJobs (0xB25E20) runs
+// CColony::UpdateModifier for every colony (inlined: Update of the colony's node at +0x120, or Clear when flag bit 2 of
+// +0x1088 is set), serially on the main thread, and after the colony monthly pass every colony's node and its planet's
+// are dirty (CColony::InvalidateModifier invalidates the carrier planet too, and each one's rebuild re-marks the
+// other): 317 of 560 colonies rebuilt with their planets, 8.8 ms of a 42 ms pass on a late save. The call is timed
+// here; perf_jobs runs the modifier manager's own parallel flush before the pass (mode 1: the loop drops to 1 ms but
+// the flush, every dirty node of the game, costs 13 ms) or has the loop's Updates skipped (mode 2: 9 ms less in the
+// pass, which then works from the colonies' last rebuilt state, not the engine's result, and a quarter more colony and
+// a third more planet rebuilds over the month, in the daily flush). Neither pays; both are kept for measurement.
+constexpr uintptr_t kJobsColonyUpdateCall = 0xB25E9D;
+// Where the colony and planet modifier rebuilds happen (CColony::CalcModifier 0xDAD840 and the planet's 0xE04060, the
+// functions the nodes' rebuild runs, from Update or from the manager's flush): counted and timed per context, so the
+// cost the pass no longer pays can be seen moving. Contexts: the first pop-job pass on its own thread, the pass on a
+// worker thread (its parallel sections and the manager's flush), the rest of the monthly update, any other time.
+constexpr uintptr_t kRvaColonyCalc = 0xDAD840;
+constexpr uintptr_t kRvaPlanetCalc = 0xE04060;
+const uint8_t kHeadColonyCalc[8] = { 0x48, 0x89, 0x4C, 0x24, 0x08, 0x55, 0x56, 0x48 };
+const uint8_t kHeadPlanetCalc[8] = { 0x48, 0x89, 0x54, 0x24, 0x10, 0x48, 0x89, 0x4C };
 constexpr int kMaxJobsPending = 4096;  // nodes per pass; beyond that the engine's refreshes run as they come
 constexpr ptrdiff_t kNodeDirty = 0x108;  // CModifierNodeBase: the byte Update tests and clears
 
@@ -111,6 +130,47 @@ std::atomic<uint64_t> g_jobs_dirty_end{ 0 }, g_jobs_clean_end{ 0 };
 // flush (clean at the next pass without an Update seen), or still dirty at the next pass (never read)
 void* g_jobs_watch[kMaxJobsPending];
 std::atomic<int> g_jobs_watch_n{ 0 };
+uintptr_t g_jobs_colony_site = 0;  // 0 = not found
+std::atomic<bool> g_jobs_colony_skip{ false };
+thread_local bool t_jobs_colony_skip = false;
+std::atomic<uint64_t> g_jobs_colony_calls{ 0 }, g_jobs_colony_us{ 0 }, g_jobs_colony_skipped{ 0 };
+uint64_t Now();
+using CalcFn = uint64_t (*)(void*, void*);
+CalcFn g_orig_colony_calc = nullptr, g_orig_planet_calc = nullptr;
+bool g_calc_installed = false;
+thread_local bool t_main = false;  // set on the thread that runs the pop-job passes (the main thread)
+struct Rebuilds {
+    std::atomic<uint64_t> n[5], us[5];  // 0 = the pass, its thread; 1 = the pass, a worker; 2 = the monthly update; 3 = elsewhere;
+                                        // 4 = the modifier manager's flush (told apart only while node_trace is on)
+};
+Rebuilds g_colony_rb, g_planet_rb;
+
+int RebuildContext() {
+    if (nodes::InFlush()) return 4;
+    SharedStats* s = Shared();
+    if (!s) return 3;
+    if (s->jobs_active) return t_main ? 0 : 1;
+    return s->monthly_active ? 2 : 3;
+}
+
+uint64_t ColonyCalcDetour(void* colony, void* out) {
+    const int c = RebuildContext();
+    const uint64_t t0 = Now();
+    const uint64_t r = g_orig_colony_calc(colony, out);
+    g_colony_rb.us[c].fetch_add((uint64_t)((double)(Now() - t0) * g_qpc_us), std::memory_order_relaxed);
+    g_colony_rb.n[c].fetch_add(1, std::memory_order_relaxed);
+    return r;
+}
+
+uint64_t PlanetCalcDetour(void* planet, void* out) {
+    const int c = RebuildContext();
+    if (nodes::Tracing()) nodes::OnPlanetCalc(planet, out);
+    const uint64_t t0 = Now();
+    const uint64_t r = g_orig_planet_calc(planet, out);
+    g_planet_rb.us[c].fetch_add((uint64_t)((double)(Now() - t0) * g_qpc_us), std::memory_order_relaxed);
+    g_planet_rb.n[c].fetch_add(1, std::memory_order_relaxed);
+    return r;
+}
 std::atomic<uint64_t> g_jobs_reread_in{ 0 }, g_jobs_reread_out{ 0 }, g_jobs_flushed{ 0 }, g_jobs_unread{ 0 }, g_jobs_reread_us{ 0 };
 
 uint64_t Now() {
@@ -176,8 +236,25 @@ bool WatchRead(void* node, uint64_t* result) {
     return false;
 }
 
+// The start loop's refresh of one colony's node: skipped (mode 2) or run and timed.
+uint64_t JobsColonyUpdate(void* node) {
+    g_jobs_colony_calls.fetch_add(1, std::memory_order_relaxed);
+    if (t_jobs_colony_skip) {
+        g_jobs_colony_skipped.fetch_add(1, std::memory_order_relaxed);
+        return 0;
+    }
+    const uint64_t t0 = Now();
+    const uint64_t r = g_orig_update(node);
+    g_jobs_colony_us.fetch_add((uint64_t)((double)(Now() - t0) * g_qpc_us), std::memory_order_relaxed);
+    return r;
+}
+
 uint64_t UpdateDetour(void* node) {
-    if (t_jobs_depth && IsSite(g_jobs_sites, kJobsSites, (uintptr_t)_ReturnAddress())) return JobsSiteUpdate(node);
+    if (t_jobs_depth) {
+        const uintptr_t ret = (uintptr_t)_ReturnAddress();
+        if (IsSite(g_jobs_sites, kJobsSites, ret)) return JobsSiteUpdate(node);
+        if (ret == g_jobs_colony_site) return JobsColonyUpdate(node);
+    }
     if (g_jobs_watch_n.load(std::memory_order_relaxed) > 0) {
         uint64_t r;
         if (WatchRead(node, &r)) return r;
@@ -265,7 +342,9 @@ bool Sites(const uintptr_t* calls, int n, uintptr_t target, uintptr_t* out, cons
 void BeginJobsPass() {
     if (!g_jobs_installed) return;
     if (t_jobs_depth++ == 0) {
+        t_main = true;
         t_jobs_mode = g_jobs_mode.load(std::memory_order_relaxed);
+        t_jobs_colony_skip = g_jobs_colony_site != 0 && g_jobs_colony_skip.load(std::memory_order_relaxed);
         g_jobs_pending_n = 0;
         g_jobs_overflow = false;
         // mode 3: what became of the nodes the previous pass left dirty and nobody rebuilt on demand
@@ -311,6 +390,18 @@ void SetJobsMode(int mode) {
     if (g_jobs_mode.exchange(mode) != mode) Log("pop_jobs_node_batch=%d", mode);
 }
 
+bool SetJobsColonySkip(bool skip) {
+    if (!g_jobs_installed || !g_jobs_colony_site) return false;
+    g_jobs_colony_skip.store(skip, std::memory_order_relaxed);
+    return true;
+}
+
+void JobsColonyLoopStats(uint64_t* calls, uint64_t* us, uint64_t* skipped) {
+    *calls = g_jobs_colony_calls.load();
+    *us = g_jobs_colony_us.load();
+    *skipped = g_jobs_colony_skipped.load();
+}
+
 bool Install(uintptr_t base) {
     g_base = base;
     struct Check { uintptr_t rva; const uint8_t* head; const char* name; };
@@ -352,6 +443,23 @@ bool Install(uintptr_t base) {
     if (Sites(kJobsUpdateCalls, kJobsSites, sdk::fn::CModifierNodeBase_Update, g_jobs_sites, "CModifierNodeBase::Update", "pop_jobs_node_batch")) {
         g_jobs_installed = true;
         Log("colony: the pop-job pass's two refreshes per new group found (pop_jobs_node_batch)");
+        if (Sites(&kJobsColonyUpdateCall, 1, sdk::fn::CModifierNodeBase_Update, &g_jobs_colony_site, "CModifierNodeBase::Update", "pop_jobs_flush_first=2")) {
+            Log("colony: the pop-job pass's colony refresh loop found (pop_jobs_flush_first)");
+        } else {
+            g_jobs_colony_site = 0;
+        }
+    }
+    // the rebuild accounting (statistics only)
+    if (memcmp((const void*)(base + kRvaColonyCalc), kHeadColonyCalc, 8) == 0 && memcmp((const void*)(base + kRvaPlanetCalc), kHeadPlanetCalc, 8) == 0) {
+        const LPVOID cc = (LPVOID)(base + kRvaColonyCalc), pc = (LPVOID)(base + kRvaPlanetCalc);
+        if (MH_CreateHook(cc, (LPVOID)&ColonyCalcDetour, (LPVOID*)&g_orig_colony_calc) == MH_OK &&
+            MH_CreateHook(pc, (LPVOID)&PlanetCalcDetour, (LPVOID*)&g_orig_planet_calc) == MH_OK &&
+            MH_EnableHook(cc) == MH_OK && MH_EnableHook(pc) == MH_OK) {
+            g_calc_installed = true;
+            Log("colony: hooked the colony and planet modifier rebuilds (node_rebuilds statistics)");
+        }
+    } else {
+        Log("colony: the colony / planet modifier rebuild functions do not start as expected; node_rebuilds statistics unavailable");
     }
     return true;
 }
@@ -388,7 +496,20 @@ std::string Stats() {
              (unsigned long long)g_jobs_clean_end.load(), (unsigned long long)g_jobs_reread_in.load(),
              (unsigned long long)g_jobs_reread_out.load(), passes ? (double)g_jobs_reread_us.load() / 1000.0 / (double)passes : 0.0,
              (unsigned long long)g_jobs_flushed.load(), (unsigned long long)g_jobs_unread.load());
-    return out + buf;
+    out += buf;
+    if (!g_calc_installed) return out;
+    const Rebuilds* rb[2] = { &g_colony_rb, &g_planet_rb };
+    const char* names[2] = { "colony", "planet" };
+    for (int k = 0; k < 2; ++k) {
+        snprintf(buf, sizeof buf, " | node_rebuilds_%s(pass_main=%llu/%.1fms pass_worker=%llu/%.1fms monthly=%llu/%.1fms other=%llu/%.1fms flush=%llu/%.1fms)",
+                 names[k], (unsigned long long)rb[k]->n[0].load(), (double)rb[k]->us[0].load() / 1000.0,
+                 (unsigned long long)rb[k]->n[1].load(), (double)rb[k]->us[1].load() / 1000.0,
+                 (unsigned long long)rb[k]->n[2].load(), (double)rb[k]->us[2].load() / 1000.0,
+                 (unsigned long long)rb[k]->n[3].load(), (double)rb[k]->us[3].load() / 1000.0,
+                 (unsigned long long)rb[k]->n[4].load(), (double)rb[k]->us[4].load() / 1000.0);
+        out += buf;
+    }
+    return out;
 }
 
 }  // namespace perf::colony

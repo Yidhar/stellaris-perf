@@ -256,6 +256,61 @@ month-start monthly update 301.3 ms off, 295.8 ms on (medians 297.7 / 299.6; 15 
 month starts 301.9 / 292.4 (medians 295.4 / 290.5): a 5 ms effect is inside that measurement's noise, the pass timer
 and the reader timing are the numbers. Default `2`.
 
+**The pass's colony refresh loop (`pop_jobs_flush_first`: no gain).** `UpdatePopJobs` starts with
+`CColony::UpdateModifier` for every colony of the span (0xB25E20: `CModifierNodeBase::Update` of the node at +0x120,
+or `Clear` when bit 2 of +0x1088 is set), 13.7 % of the first pass in the samples, two thirds of it the planet
+rebuilds (0xE04060) the colony rebuilds (0xDAD840) pull in first. The pass timer with the loop's call hooked: 560
+colonies per pass, 317 of them rebuilt with their planets, 8.3 to 8.8 ms of a 42 to 44 ms pass. Why they are all
+dirty: `CColony::InvalidateModifier` invalidates the node's children and then the carrier (the planet,
+`CPlanet::InvalidateModifier`, which invalidates its children, the colony among them); the colony's rebuild inherits
+the planet's node, and the planet's rebuild (two parents, three masked `InvalidateChildren`) marks the colony again.
+`1` runs the modifier manager's flush (`CModifierNodeManager::Update`, hooked anyway; the manager pointer is the one
+the hook last saw) before the pass: the loop drops to 1.0 ms and the pass to 34.9 ms, but the flush, which rebuilds
+every dirty node of the game, takes 13.4 ms on the main thread. `2` skips the loop's `Update` calls: the pass drops to
+32.5 to 34.8 ms, and the colony and planet rebuilds, hooked and counted by context (`node_rebuilds_colony` /
+`node_rebuilds_planet` in the statistics line: the pass on its thread, the pass on a worker, the rest of the monthly
+update, elsewhere), show where the work goes. Per month on the late save with the engine's loop: colonies 317 in the
+pass, 1,258 in the rest of the monthly update, 151 a day; planets 317, 3,248 and 1,258 a day (14.5 ms of thread time
+a day). With `2`: 39 in the pass and none on the workers, i.e. the pass does not rebuild the colonies on demand (it
+works from their last rebuilt state, so the result is not the engine's), 1,422 in the rest of the month start and 206
+a day for the colonies, 3,077 and 1,667 a day for the planets: a quarter more colony and a third more planet rebuilds
+over the month, almost all of them in the daily flush. Switched back to `0`, the counts return (303 per pass, 1,297
+planets a day). Both modes stay as measurement options, off.
+
+**The country-wide cascade (`modifier_cascade_gate`).** Measured with the plugin's `node_trace` (every invalidation
+by call site and cascade root, every rebuild by category through the calc delegate each node holds, the flush's wall
+time), on the late save over 30 normal days: the modifier manager's flush rebuilds 304,000 nodes, 10,100 a day
+(57,000 pop groups, 47,000 fleets, 104,000 ships, 58,000 planets, 89 % of them uncolonized, 44,000 armies, 10,000
+starbases, 8,500 spy networks, 7,600 megastructures, 6,200 colonies), 126 ms of thread time and 15.3 ms of wall time
+a day, 93 % of the rebuilds producing the modifier the node already had; 93 % of the nodes were marked dirty only by a
+cascade, never invalidated themselves, and 74 % of the cascaded nodes descend from the country's main node
+(`CCountry::InvalidateModifier` 0x23EFA0, the node at +0x3150), 11 % from the relay network node (+0x2CF0, a parent
+of every planet). The country node is invalidated 6 to 11 times a day across the empires: the country's daily update
+(0x6F1530, when the flag at +0x1268 says a faction's support or approval moved; it rebuilds the node at once
+afterwards), `UpdateRelayNetwork` (0x752D60, a parallel task, when the set of systems in the network changed), the
+daily pop-job recompute (`AssignPopsToJobs`), a planet's daily update, leader and starbase changes; its rebuilt
+modifier is identical in 86 to 93 % of them. The content is compared as sets of entries (value, type) and source
+records (multiplier, category, the source name through the name object's own `CalcHash`): an order-sensitive hash
+calls a rebuild that lists the same entries in another order a change, and the name objects are made anew at every
+rebuild. The gate holds `InvalidateChildren` at the three call sites (0x23EFD7, 0x574E06, 0x752EF8), hashes the node,
+lets the engine register it, rebuilds it at once through `CModifierNodeBase::Update` after the registration
+(`perf_tweaks`'s `AddInvalid` hook), drops the masked cascades the rebuild makes itself (they find no linked child in
+the engine either, which unlinks the children at the invalidation), and after the rebuild (the delegate hooked:
+0x77D8B0 for `CCountry`'s nodes, 0xAD5910 for the relay manager's) invalidates the children with the engine's own
+`InvalidateChildren(node, -1)` when the hash differs. Count only (`3`): 5,157 invalidations in 466 days, 3,906
+unchanged. Mode `1` (main-thread invalidations): 3,725 of 6,581 held, the flush 226,000 rebuilds and 11.5 ms a day.
+Mode `2` (every thread): 7,304 held, 6,774 unchanged (93 %), the immediate rebuilds 2.4 ms a day on the invalidating
+thread (the engine's daily path already spent about 1 ms of it), the flush 104,000 to 132,000 rebuilds, 47 to 59 ms
+of thread time and 7.5 to 8.5 ms of wall time a day. 36 months alternating monthly, cycle `2,0,0,2`
+([`modifier_cascade_gate2_interleave_36m.json`](data/phases-late-4.5.2/modifier_cascade_gate2_interleave_36m.json)):
+a normal day's `daily` phase 75.2 → 67.3 ms (medians 57.1 / 53.2; 530 / 494 days), the day 195.9 → 188.3 ms (medians
+179.3 / 175.2), the regular month starts' monthly update 294.1 → 283.5 ms (medians 284.6 / 281.3; 15 / 15). The
+deviation from the engine, measured in count-only mode as the cascade-only rebuilds whose cascading parents were all
+rebuilt unchanged and whose own content still changed: 215 per 30 days, 0.07 % of the flush's rebuilds (colonies
+losing or changing two entries, a system's four planets losing their three entries at once, three ships, two pop
+groups): nodes whose inputs changed without an invalidation of their own, refreshed by the engine through the next
+country-wide cascade and by the gate at their next invalidation or the country's next change. Default `2`.
+
 **The daily AI phase is one country's update (`ai_parallel_lpt`: no gain).** `UpdateAIParallel` (0xB86900) is a
 parallel-for over the `CCountryAI` array (78 entries on the late save): tasks take entries one by one from a shared
 counter and call vtable slot 7 (0xB6EF20: skips countries without an AI, 34 of the 78, then the base update, which runs

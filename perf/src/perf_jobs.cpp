@@ -67,6 +67,15 @@ bool g_pending_overflow = false;
 std::atomic<uint64_t> g_fac_calls{ 0 }, g_fac_distinct{ 0 }, g_fac_deferred{ 0 }, g_fac_us{ 0 }, g_fac_windows{ 0 };
 std::atomic<uint64_t> g_fac_verified{ 0 }, g_fac_mismatch{ 0 };
 
+// pop_jobs_flush_first (experimental, off): every pass starts with a serial loop refreshing every colony's modifier
+// node (CColony::UpdateModifier), and after the colony monthly pass every colony's and planet's node is dirty: 8.8 ms
+// of a 42 ms pass on a late save. 1 = the modifier manager's own parallel flush (CModifierNodeManager::Update, the
+// engine's rebuild of every dirty node, category by category) runs before the pass, so the loop finds the nodes clean
+// (measured: the flush costs more than the loop); 2 = the loop's refreshes are skipped (measured: the pass works from
+// the colonies' last rebuilt state and the month's rebuilds rise); 0 = the engine's loop. See perf_colony.cpp.
+std::atomic<int> g_flush_mode{ 0 };
+std::atomic<uint64_t> g_flushes{ 0 }, g_flush_us{ 0 }, g_flush_noinvalid{ 0 };
+
 uint64_t Now() {
     LARGE_INTEGER c;
     QueryPerformanceCounter(&c);
@@ -169,6 +178,15 @@ uint64_t Detour(void* a, void* b, void* c, void* d, uint64_t e, uint64_t f, uint
         shared->jobs_tid = GetCurrentThreadId();
         InterlockedExchange((volatile LONG*)&shared->jobs_active, 1);
     }
+    if (g_flush_mode.load(std::memory_order_relaxed) == 1) {  // pop_jobs_flush_first: the dirty nodes rebuilt in parallel first
+        bool had_invalid = false;
+        const uint64_t f0 = Now();
+        if (FlushModifierNodes(&had_invalid)) {
+            g_flushes.fetch_add(1, std::memory_order_relaxed);
+            if (!had_invalid) g_flush_noinvalid.fetch_add(1, std::memory_order_relaxed);
+            g_flush_us.fetch_add((uint64_t)((double)(Now() - f0) * g_qpc_us), std::memory_order_relaxed);
+        }
+    }
     // a window over the pass (inside the monthly window of mode 2 it only nests: that one flushes at its end)
     if (g_faction_installed) BeginWindow(g_faction_mode.load(std::memory_order_relaxed));
     colony::BeginJobsPass();  // pop_jobs_node_batch: the refreshes of the groups the pass creates
@@ -254,6 +272,14 @@ void SetFactionMode(int mode) {
     if (g_faction_mode.exchange(mode) != mode) Log("pop_faction_batch=%d", mode);
 }
 
+void SetFlushMode(int mode) {
+    if (!g_installed) return;
+    if (mode < 0 || mode > 2) mode = 0;
+    if (mode == 2 && !colony::SetJobsColonySkip(true)) mode = 0;
+    if (mode != 2) colony::SetJobsColonySkip(false);
+    if (g_flush_mode.exchange(mode) != mode) Log("pop_jobs_flush_first=%d", mode);
+}
+
 bool Installed() { return g_installed; }
 
 std::string Stats() {
@@ -274,6 +300,15 @@ std::string Stats() {
              windows ? (double)distinct / (double)windows : 0.0, (unsigned long long)g_fac_deferred.load(),
              windows ? (double)g_fac_us.load() / 1000.0 / (double)windows : 0.0, (unsigned long long)g_fac_verified.load(),
              (unsigned long long)g_fac_mismatch.load());
+    out += buf;
+    uint64_t loop_calls = 0, loop_us = 0, loop_skipped = 0;
+    colony::JobsColonyLoopStats(&loop_calls, &loop_us, &loop_skipped);
+    const uint64_t passes = first + (second - skipped), flushes = g_flushes.load();
+    snprintf(buf, sizeof buf,
+             " | pop_jobs_flush_first=%d(flushes=%llu flush_ms=%.2f noinvalid=%llu loop_calls/pass=%.0f loop_ms/pass=%.2f loop_skipped=%llu)",
+             g_flush_mode.load(), (unsigned long long)flushes, flushes ? (double)g_flush_us.load() / 1000.0 / (double)flushes : 0.0,
+             (unsigned long long)g_flush_noinvalid.load(), passes ? (double)loop_calls / (double)passes : 0.0,
+             passes ? (double)loop_us / 1000.0 / (double)passes : 0.0, (unsigned long long)loop_skipped);
     return out + buf;
 }
 

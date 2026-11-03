@@ -28,9 +28,16 @@ namespace perf::jobs {
 // the whole NColonyUpdate::MonthlyUpdate (growth, migration, decline, assembly, the passes), the default; 3 / 4 =
 // verify: the engine's calls, then at the end of the window of 1 / 2 every faction touched recomputed once more from
 // the final state and compared (mismatches logged and counted).
+//
+// pop_jobs_flush_first (experimental, off): every pass starts with a serial loop refreshing every colony's modifier
+// node, all dirty after the colony monthly pass (8.8 ms of a 42 ms pass on a late save). 1 = the modifier manager's
+// own parallel flush runs before the pass, so the loop finds the nodes clean (the flush costs more than the loop);
+// 2 = the loop's refreshes are skipped (the pass then works from the colonies' last rebuilt state, not the engine's
+// result, and the month's rebuilds rise); 0 = the engine's loop. Both non-zero modes are for measurement.
 bool Install(uintptr_t base);
 void SetEnabled(bool on);
 void SetFactionMode(int mode);
+void SetFlushMode(int mode);
 bool Installed();
 std::string Stats();
 

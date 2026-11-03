@@ -5,6 +5,7 @@
 #include "perf_combat.hpp"
 #include "perf_colony.hpp"
 #include "perf_jobs.hpp"
+#include "perf_nodes.hpp"
 #include "perf_ai.hpp"
 #include "perf_weight.hpp"
 #include "perf_save.hpp"
@@ -463,6 +464,7 @@ void HandleTurnTickDetour(void* game_state, void* commands) {
     if (day != g_last_day) {
         g_last_day = day;
         g_gen.fetch_add(1, std::memory_order_relaxed);
+        nodes::OnDay(day);
     }
 }
 
@@ -944,14 +946,21 @@ std::atomic<uint64_t> g_flush_why[4];     // full-path reasons: worker invalidat
 std::atomic<uint64_t> g_flush_hist[7];    // fast-path sizes: 1, 2, 3-4, 5-8, 9-16, 17-32, 33+
 
 void AddInvalidDetour(void* mgr, uint32_t node_id, uint32_t category) {
-    if (g_flush_mode.load(std::memory_order_relaxed) == 0) return g_orig_add_invalid(mgr, node_id, category);
+    if (nodes::Tracing()) nodes::OnAddInvalid(mgr, node_id, category, (uintptr_t)_ReturnAddress());
+    if (g_flush_mode.load(std::memory_order_relaxed) == 0) {
+        g_orig_add_invalid(mgr, node_id, category);
+        nodes::AfterAddInvalid(mgr, node_id);
+        return;
+    }
     if (GetCurrentThreadId() != g_main_tid.load(std::memory_order_relaxed)) {
         g_winv_begin.fetch_add(1);
         g_orig_add_invalid(mgr, node_id, category);
         g_winv_end.fetch_add(1);
+        nodes::AfterAddInvalid(mgr, node_id);
         return;
     }
     g_orig_add_invalid(mgr, node_id, category);
+    nodes::AfterAddInvalid(mgr, node_id);
     if (g_inv_n < kInvCap) g_inv_ids[g_inv_n++] = node_id;
     else g_inv_overflow = true;
 }
@@ -1081,10 +1090,29 @@ void FullFlush(void* mgr, int why) {
     g_flush_full.fetch_add(1, std::memory_order_relaxed);
 }
 
+std::atomic<void*> g_mgr_seen{ nullptr };  // the manager the engine's flush was last called on
+void ManagerUpdateDetour(void* mgr);
+
+}  // namespace
+
+bool FlushModifierNodes(bool* had_invalid) {
+    void* mgr = g_mgr_seen.load(std::memory_order_relaxed);
+    if (!mgr) return false;
+    *had_invalid = ((const unsigned char*)mgr)[sdk::rt::CModifierNodeManager_has_invalid] != 0;
+    ManagerUpdateDetour(mgr);
+    return true;
+}
+
+namespace {
+
 void ManagerUpdateDetour(void* mgr) {
+    g_mgr_seen.store(mgr, std::memory_order_relaxed);
     if (colony::HoldFlush()) return;  // inside a colony's monthly pass: the next flush after it rebuilds the dirty nodes once
     const int mode = g_flush_mode.load(std::memory_order_relaxed);
-    if (mode == 0 || GetCurrentThreadId() != g_main_tid.load(std::memory_order_relaxed)) return g_orig_mgr_update(mgr);
+    if (mode == 0 || GetCurrentThreadId() != g_main_tid.load(std::memory_order_relaxed)) {
+        if (nodes::Tracing()) return nodes::TracedFlush(mgr, g_orig_mgr_update);
+        return g_orig_mgr_update(mgr);
+    }
     auto* m = (unsigned char*)mgr;
     // batched, busy or nothing invalid: the engine returns without collecting; keep what we recorded
     if (m[sdk::rt::CModifierNodeManager_batch] || m[sdk::rt::CModifierNodeManager_busy] ||
@@ -1455,6 +1483,7 @@ bool Install(uintptr_t base) {
         alloc::Install(base);
         combat::Install(base);
         colony::Install(base);
+        nodes::Install(base);
         jobs::Install(base);
         ai::Install(base);
         weight::Install(base);
@@ -1527,6 +1556,9 @@ void Apply(const Settings& s) {
     jobs::SetEnabled(s.pop_jobs_single_pass);
     jobs::SetFactionMode(s.pop_faction_batch);
     colony::SetJobsMode(s.pop_jobs_node_batch);
+    jobs::SetFlushMode(s.pop_jobs_flush_first);
+    nodes::SetGateMode(s.modifier_cascade_gate);
+    nodes::SetTrace(s.node_trace);
     ai::SetEnabled(s.ai_parallel_lpt);
     ai::SetNestedInline(s.ai_nested_inline);
     weight::SetEnabled(s.ai_weight_cache);
@@ -1693,7 +1725,7 @@ std::string StatsLine() {
            one("flag_simd(hits=static misses=dynamic bypass=unreadable)", g_flag_stats, g_flag_mode.load() != 0) +
            " mismatches=" + std::to_string(g_flag_mismatch.load()) + " | " +
            one("flag_expiry_skip(hits=skipped)", g_expiry_stats, g_expiry_skip.load()) +
-           " | tick_render_fps=" + (render::Installed() ? std::to_string(render::Dropped()) + " dropped / " + std::to_string(render::Passed()) + " drawn" : std::string("unavailable")) + " | combat_no_copy=" + (combat::Patched() ? "on" : (combat::Installed() ? "off" : "unavailable")) + " | " + colony::Stats() + " | " + jobs::Stats() + " | " + ai::Stats() + " | " + weight::Stats() + " | " + save::Stats() + " | " + writer::Stats() + " | " + AllocStats() + " | " + phase::Summary() + " | " + FlushStats() + " | " + ScopeStats() +
+           " | tick_render_fps=" + (render::Installed() ? std::to_string(render::Dropped()) + " dropped / " + std::to_string(render::Passed()) + " drawn" : std::string("unavailable")) + " | combat_no_copy=" + (combat::Patched() ? "on" : (combat::Installed() ? "off" : "unavailable")) + " | " + colony::Stats() + " | " + nodes::Stats() + " | " + jobs::Stats() + " | " + ai::Stats() + " | " + weight::Stats() + " | " + save::Stats() + " | " + writer::Stats() + " | " + AllocStats() + " | " + phase::Summary() + " | " + FlushStats() + " | " + ScopeStats() +
            " | gen=" + std::to_string(g_gen.load()) + prof;
 }
 

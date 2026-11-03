@@ -158,6 +158,40 @@ are off pass straight through to the engine.
   the readers that rebuild the nodes later take 2.3 ms per month; over 36 months alternating monthly, the month-start
   monthly update 301 ms off and 296 ms on (medians 298 / 300: within the noise of that measurement, see
   [`bench/RESULTS.md`](bench/RESULTS.md)).
+- **The pop-job pass's colony refresh loop** (`pop_jobs_flush_first`, experimental, off). Every pass starts by
+  refreshing every colony's modifier node, one after the other on the main thread, and after the colony monthly pass
+  every colony's node and its planet's are dirty (a colony's invalidation also invalidates its planet, and each
+  rebuild of one re-invalidates the other): on a late save 317 of 560 colonies rebuilt with their planets, 8.8 ms of a
+  42 ms pass, three quarters of it the planets. `1` runs the modifier manager's own parallel flush before the pass so
+  the loop finds the nodes clean: the loop drops to 1 ms, but the flush, which rebuilds every dirty node of the game
+  (thousands of pop groups too), costs 13 ms. `2` skips the loop: the pass is 9 ms shorter and does not rebuild the
+  colonies on demand (it works from their last rebuilt state), and over the month that follows the colony rebuilds
+  rise by a quarter and the planet rebuilds by a third (the daily flush rebuilds them again). Neither pays; both are
+  kept for measurement, with the counts of colony and planet rebuilds by context in the statistics line
+  (`node_rebuilds_*`): on the late save the planets alone are rebuilt about 1,260 times a day, 14.5 ms of thread time,
+  and 3,250 times more at a month start.
+- **No country-wide modifier cascade when the country's modifier did not change** (`modifier_cascade_gate`, default
+  `2`). A country's modifier node is invalidated several times a day: its daily update when a faction's support or
+  approval moved, the relay network update when the set of systems in the network changed, a planet's daily update,
+  the daily pop-job recompute, leader and starbase changes. Every invalidation marks all of the node's children dirty
+  at once (`CModifierNodeBase::InvalidateChildren`, every category): the planets (colonized or not), pop groups,
+  fleets, ships, armies, starbases and leaders of the country, and the modifier manager's next flush rebuilds them
+  all: on a late save 10,000 rebuilds and 15 ms of wall time a day, over 90 % of them producing the modifier the node
+  already had, while the country's own rebuilt modifier is identical nine times out of ten. The same for the relay
+  network node, a parent of every planet. With this on the cascade from the country's main node and from the relay
+  node is held at its three call sites: the node is rebuilt at once on the invalidating thread (the engine's daily
+  path rebuilds it right there anyway) and its children are invalidated the engine's way only when the rebuilt
+  content differs from the content they were built from (the entries by type and the source records' multiplier,
+  category and name content, compared as sets). Deterministic. Measured on the late save: 11 held invalidations a
+  day, 93 % with the content unchanged; the daily flush drops from 10,100 to 3,500 rebuilds and from 15 to 7.5 ms of
+  wall time; over 36 months alternating monthly, a normal day's `DailyUpdate` 75.2 → 67.3 ms (medians 57.1 / 53.2) and
+  the day 195.9 → 188.3 ms (medians 179.3 / 175.2), the month-start monthly update 294 → 284 ms. What differs from the
+  engine: a child whose own inputs changed without an invalidation of its own, which the engine refreshes through the
+  next country-wide cascade, keeps its modifier until its next invalidation or the next change of the country's
+  content: about seven nodes a day on the late save, colonies and planets mostly (see
+  [`bench/RESULTS.md`](bench/RESULTS.md)). `1` holds only the invalidations made on the main thread (the relay network
+  update runs in a parallel task; its invalidations keep the engine's cascade), `3` counts without holding, `0` is the
+  engine's.
 - **The daily AI update's countries heaviest first** (`ai_parallel_lpt`, experimental, off). `UpdateAIParallel` is a
   parallel-for over the `CCountryAI` array: its tasks take the countries one by one from a shared counter, in array
   order, and the main thread takes its share and then waits for the last task. With this on the plugin's hook of the
@@ -298,6 +332,9 @@ clones.
 | `pop_jobs_single_pass` | `1` | monthly pop-job assignment once instead of twice (the engine's second call is one more iteration over the first's result) |
 | `pop_faction_batch` | `2` | a faction's support and approval recomputed once per faction at the end of a window instead of after every pop move in it: `1` each pop-job pass, `2` the whole monthly colony update; `0` the engine's calls; `3` / `4` verify |
 | `pop_jobs_node_batch` | `2` | the two modifier refreshes forced for every pop group a promotion creates: `2` skipped, the nodes left to their next reader; `1` done once each when the pass ends (no gain); `0` the engine's; `3` measurement |
+| `pop_jobs_flush_first` | `0` | experimental: the pass's serial colony refresh loop: `1` the modifier manager's parallel flush first (costs more), `2` the loop skipped (not the engine's result, more rebuilds later); measurement only |
+| `modifier_cascade_gate` | `2` | the country's and the relay network node's invalidations rebuild the node at once and invalidate its children only when its content changed: `2` every invalidation, `1` main-thread ones only, `3` count only, `0` the engine's cascades |
+| `node_trace` | `0` | measurement: the modifier graph's work by source per 30 game days (invalidations by call site and cascade root, rebuilds by category and context, the flush), written to the log |
 | `ai_parallel_lpt` | `0` | experimental: daily AI update with the countries processed heaviest first; measured no gain |
 | `ai_weight_cache` | `1` | scripted weight factors memoised per (weight, scope) within one daily AI phase |
 | `ai_nested_inline` | `0` | experimental: a parallel-for started inside a country's AI update runs on that thread; measured within noise |

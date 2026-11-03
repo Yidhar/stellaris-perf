@@ -84,6 +84,17 @@ struct Settings {
     // (perf_colony.hpp); 2 = left to the node's next reader, 1 = done once per node when the pass ends (no gain),
     // 0 = the engine's refreshes, 3 = measurement
     int pop_jobs_node_batch = 2;
+    // Experimental, off (measurement only): the serial refresh of every colony's modifier node at the start of the
+    // monthly pop-job pass (perf_jobs.hpp); 1 = the modifier manager's parallel flush runs before the pass instead
+    // (costs more), 2 = the refreshes skipped (not the engine's result), 0 = the engine's loop
+    int pop_jobs_flush_first = 0;
+    // The country's and the relay network node's invalidations rebuild the node at once and invalidate its children
+    // only when its content changed (perf_nodes.hpp); 2 = every invalidation (the default), 1 = main-thread ones only,
+    // 3 = count only, 0 = the engine's cascades
+    int modifier_cascade_gate = 2;
+    // Measurement only: the modifier graph's work by source (invalidations by call site and cascade root, rebuilds by
+    // category and context, the manager's flush), written to the log per 30 game days (perf_nodes.hpp)
+    int node_trace = 0;
     // Daily AI update: the countries processed heaviest first (by the cost measured the day before) (perf_ai.hpp).
     // Measured: no gain, the phase is the heaviest country's own update, which starts first anyway; off. The
     // per-country measurement in the stats line is on regardless.
@@ -130,5 +141,8 @@ void Apply(const Settings& s);
 std::string StatsLine();
 // Refreshes the slower counters in the shared statistics (perf_shared.hpp).
 void Publish();
+// Runs the modifier manager's flush (CModifierNodeManager::Update: every dirty node rebuilt, in parallel) on the
+// manager last seen by its hook; false when none was seen yet. *had_invalid = the manager had dirty nodes registered.
+bool FlushModifierNodes(bool* had_invalid);
 
 } // namespace perf
