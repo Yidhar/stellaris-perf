@@ -1,4 +1,5 @@
 #include "perf_weight.hpp"
+#include "stellaris_sdk.hpp"
 #include "perf_ai.hpp"
 #include "perf_tweaks.hpp"
 #include "MinHook.h"
@@ -12,10 +13,9 @@
 namespace perf::weight {
 namespace {
 
-// 4.5.2: CMeanTimeToHappen::GetRawFactor(this, CFixedPoint* out, const CEventScope* scope) -> out. The factor list
-// at this+0x8B8 writes the base into *out and lets each modifier scale it (entry bytes checked at install).
-constexpr uintptr_t kRvaGetRawFactor = 0x3BC290;
-const uint8_t kHead[8] = { 0x48, 0x89, 0x5C, 0x24, 0x08, 0x48, 0x89, 0x74 };
+// CMeanTimeToHappen::GetRawFactor(this, CFixedPoint* out, const CEventScope* scope) -> out, from the SDK: the base
+// factor is written into *out and every modifier of the list scales it.
+constexpr uintptr_t kRvaGetRawFactor = sdk::fn::CMeanTimeToHappen_GetRawFactor;
 
 using Fn = void* (*)(void*, void*, const void*);
 Fn g_orig = nullptr;
@@ -85,11 +85,6 @@ void* Detour(void* weight, void* out, const void* scope) {
 }  // namespace
 
 bool Install(uintptr_t base) {
-    if (memcmp((const void*)(base + kRvaGetRawFactor), kHead, 8) != 0) {
-        Log("weight: CMeanTimeToHappen::GetRawFactor at RVA 0x%llX does not start as expected; ai_weight_cache unavailable",
-            (unsigned long long)kRvaGetRawFactor);
-        return false;
-    }
     const LPVOID target = (LPVOID)(base + kRvaGetRawFactor);
     if (MH_CreateHook(target, (LPVOID)&Detour, (LPVOID*)&g_orig) != MH_OK || MH_EnableHook(target) != MH_OK) {
         Log("weight: could not hook CMeanTimeToHappen::GetRawFactor; ai_weight_cache unavailable");

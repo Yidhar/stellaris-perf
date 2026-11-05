@@ -1,6 +1,7 @@
 #include "perf_ui.hpp"
 #include "perf_tweaks.hpp"
 #include "perf_phase.hpp"
+#include "stellaris_sdk.hpp"
 #include "MinHook.h"
 
 #include <windows.h>
@@ -12,9 +13,7 @@
 namespace perf::ui {
 namespace {
 
-constexpr uintptr_t kRvaFrame = 0x332EF0;
-// first bytes of the 4.5.2 function: mov rax,rsp ; mov [rax+10h],dl ; push rbp ; push rbx ; push rsi ; push rdi ...
-constexpr uint8_t kPrologue[] = { 0x48, 0x8B, 0xC4, 0x88, 0x50, 0x10, 0x55, 0x53, 0x56, 0x57 };
+constexpr uintptr_t kRvaFrame = sdk::fn::CGameIdler_Idle;  // CGameIdler::Idle(bool), from the SDK
 
 using FrameFn = uint64_t (*)(void*, void*, void*, void*);
 FrameFn g_orig = nullptr;
@@ -65,10 +64,6 @@ uint64_t FrameDetour(void* a, void* b, void* c, void* d) {
 }  // namespace
 
 bool Install(uintptr_t base) {
-    if (memcmp((const void*)(base + kRvaFrame), kPrologue, sizeof(kPrologue)) != 0) {
-        Log("ui: the frame function's prologue does not match 4.5.2; the probe stays off");
-        return false;
-    }
     {
         LARGE_INTEGER f, q0, q1;
         QueryPerformanceFrequency(&f);

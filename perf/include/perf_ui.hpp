@@ -4,7 +4,7 @@
 
 namespace perf::ui {
 
-// The engine's per-iteration frame function (RVA 0x332EF0, 4.5.2): input, GUI update, the simulation tick, the GUI draw.
+// The engine's per-iteration frame function (CGameIdler::Idle, from the SDK): input, GUI update, the simulation tick, the GUI draw.
 // RenderFrame (perf_render.hpp) calls it again from inside a tick; the main loop calls it once per iteration.
 // Hooked only to measure how often it runs against the ticks.
 bool Install(uintptr_t base);

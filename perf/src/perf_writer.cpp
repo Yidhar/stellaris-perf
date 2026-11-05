@@ -1,5 +1,6 @@
 #include "perf_writer.hpp"
 #include "perf_tweaks.hpp"
+#include "stellaris_sdk.hpp"
 #include "MinHook.h"
 
 #include <windows.h>
@@ -12,41 +13,17 @@
 namespace perf::writer {
 namespace {
 
-// 4.5.2 (entry bytes checked at install). The names are the Linux decompile's; the Windows build outlines the
-// token-from-table writes into helpers that the decompile shows inlined.
-constexpr uintptr_t kRvaWriteData = 0x1B49F40;     // CMemoryFile::WriteData(const void*, int): vtable slot 9
-constexpr uintptr_t kRvaWriteCStr = 0x1B49EE0;     // CFile::Write(const char*): slot 6, strlen then slot 9
-constexpr uintptr_t kRvaGetSize = 0x1B49E60;       // CMemoryFile::GetSize(): slot 16; the blob's size when there is a blob
-constexpr uintptr_t kRvaWriteToken = 0x16AA50;     // CWriter::Write(CToken(id, CStaticLexer::GetString(id))): (CWriter*, int id)
-constexpr uintptr_t kRvaWriteIndent = 0x1BB4510;   // CWriter::WriteIndent(): WriteMany(0x11, depth) in text mode
-constexpr uintptr_t kRvaWriteCString = 0x1BB57F0;  // CWriter::Write(CToken(const CString&)): (CWriter*, const CString*)
-constexpr uintptr_t kRvaWriteString = 0x1BB3FF0;   // CWriter::WriteString(const char*, bool no_eol, bool unquoted)
-constexpr uintptr_t kRvaLexer = 0x1BB5AB0;         // CStaticLexer's token table (a thread-safe static)
-constexpr uintptr_t kRvaLexerRebuild = 0x1BB5B20;  // rebuilds the table's strings when its counts differ
-
-struct Head {
-    uintptr_t rva;
-    int offset;
-    uint8_t bytes[6];
-    const char* name;
-};
-// The five hooked functions and the three the fast paths rely on: a few bytes at the entry, plus a few further in
-// where the prologues are alike.
-const Head kHeads[] = {
-    { kRvaWriteData, 0, { 0x48, 0x89, 0x5C, 0x24, 0x10, 0x48 }, "CMemoryFile::WriteData" },
-    { kRvaWriteData, 0x0F, { 0x48, 0x83, 0xB9, 0x80, 0x00, 0x00 }, "CMemoryFile::WriteData" },  // cmp qword ptr [rcx+0x80], 0
-    { kRvaWriteCStr, 0, { 0x48, 0x8B, 0x01, 0x49, 0xC7, 0xC0 }, "CFile::Write(const char*)" },
-    { kRvaGetSize, 0, { 0x48, 0x8B, 0x81, 0x80, 0x00, 0x00 }, "CMemoryFile::GetSize" },
-    { kRvaWriteToken, 0, { 0x48, 0x89, 0x5C, 0x24, 0x08, 0x48 }, "CWriter::WriteToken" },
-    { kRvaWriteToken, 0x21, { 0x48, 0x63, 0xF2, 0x4C, 0x8B, 0xF9 }, "CWriter::WriteToken" },  // movsxd rsi, edx; mov r15, rcx
-    { kRvaWriteIndent, 0, { 0x48, 0x89, 0x5C, 0x24, 0x08, 0x48 }, "CWriter::WriteIndent" },
-    { kRvaWriteIndent, 0x21, { 0x48, 0x8B, 0xF9, 0x80, 0x79, 0x18 }, "CWriter::WriteIndent" },  // mov rdi, rcx; cmp byte ptr [rcx+0x18], 0
-    { kRvaWriteCString, 0, { 0x48, 0x89, 0x5C, 0x24, 0x08, 0x48 }, "CWriter::Write(CString)" },
-    { kRvaWriteCString, 0x0F, { 0x57, 0x41, 0x54, 0x41, 0x56, 0x48 }, "CWriter::Write(CString)" },  // push rdi; push r12; push r14
-    { kRvaWriteString, 0, { 0x48, 0x89, 0x5C, 0x24, 0x10, 0x44 }, "CWriter::WriteString" },
-    { kRvaLexer, 0, { 0x48, 0x83, 0xEC, 0x28, 0xBA, 0x14 }, "CStaticLexer table" },
-    { kRvaLexerRebuild, 0, { 0x48, 0x89, 0x5C, 0x24, 0x18, 0x48 }, "CStaticLexer rebuild" },
-};
+// From the SDK (tools/sdk_dumper/functions.py in the Stellaris MCP repository). The names are the Linux decompile's;
+// the Windows build outlines the token-from-table writes into helpers that the decompile shows inlined.
+constexpr uintptr_t kRvaWriteData = sdk::fn::CMemoryFile_WriteData;         // CMemoryFile::WriteData(const void*, int): vtable slot 9
+constexpr uintptr_t kRvaWriteCStr = sdk::fn::CFile_WriteCStr;               // CFile::Write(const char*): slot 6, strlen then slot 9
+constexpr uintptr_t kRvaGetSize = sdk::fn::CMemoryFile_GetSize;             // CMemoryFile::GetSize(): slot 16; the blob's size when there is a blob
+constexpr uintptr_t kRvaWriteToken = sdk::fn::CWriter_WriteTokenText;       // CWriter::Write(CToken(id, CStaticLexer::GetString(id))): (CWriter*, int id)
+constexpr uintptr_t kRvaWriteIndent = sdk::fn::CWriter_WriteIndent;         // CWriter::WriteIndent(): WriteMany(0x11, depth) in text mode
+constexpr uintptr_t kRvaWriteCString = sdk::fn::CWriter_WriteCString;       // CWriter::Write(CToken(const CString&)): (CWriter*, const CString*)
+constexpr uintptr_t kRvaWriteString = sdk::fn::CWriter_WriteString;         // CWriter::WriteString(const char*, bool no_eol, bool unquoted)
+constexpr uintptr_t kRvaLexer = sdk::fn::CStaticLexer_Table;                // CStaticLexer's token table (a thread-safe static)
+constexpr uintptr_t kRvaLexerRebuild = sdk::fn::CStaticLexer_RebuildTable;  // rebuilds the table's strings when its counts differ
 
 // Engine layouts (Windows): a CBlob, and the fields of the memory file, the writer, the token table and a CString
 // that the fast paths read.
@@ -66,6 +43,22 @@ constexpr size_t kLexerBuilt = 0x7C;    // int32: the count the strings were bui
 constexpr size_t kLexerWanted = 0x80;   // int32: the current count
 constexpr int kSlotWriteCStr = 6, kSlotWriteData = 9, kSlotGetSize = 16;
 constexpr int kTokenEol = 0x10, kTokenIndent = 0x11, kTokenFixedPoint = 0x167;
+
+// The layout constants as the functions' own code uses them: each byte string (an instruction with the constant in it)
+// must occur in the first `within` bytes of the function.
+struct LayoutCheck {
+    uintptr_t rva;
+    int within;
+    uint8_t bytes[8];
+    int len;
+    const char* name;
+};
+const LayoutCheck kLayoutChecks[] = {
+    { kRvaWriteData, 32, { 0x48, 0x83, 0xB9, (uint8_t)kFileBlob, 0, 0, 0, 0 }, 8, "CMemoryFile::WriteData: cmp qword ptr [rcx + blob], 0" },
+    { kRvaGetSize, 16, { 0x48, 0x8B, 0x81, (uint8_t)kFileBlob, 0, 0, 0 }, 7, "CMemoryFile::GetSize: mov rax, [rcx + blob]" },
+    { kRvaWriteIndent, 48, { 0x80, 0x79, (uint8_t)kWriterBinary, 0 }, 4, "CWriter::WriteIndent: cmp byte ptr [rcx + binary], 0" },
+    { kRvaWriteCStr, 32, { 0xFF, 0x60, (uint8_t)(8 * kSlotWriteData) }, 3, "CFile::Write(const char*): jmp [rax + WriteData slot]" },
+};
 
 // A CString: something at +0, the std::string at +0x10 (the token table's entries are CStrings too).
 struct CString {
@@ -290,11 +283,13 @@ void WriteStringDetour(void* w, const char* s, bool no_eol, bool unquoted) {
     g_orig_write_string(w, s, no_eol, unquoted);
 }
 
-bool CheckHeads(uintptr_t base) {
-    for (const Head& h : kHeads) {
-        if (memcmp((const void*)(base + h.rva + h.offset), h.bytes, sizeof h.bytes) != 0) {
-            Log("writer: %s (0x%llX+0x%X) does not read as expected; save_fast_writer unavailable", h.name,
-                (unsigned long long)h.rva, h.offset);
+bool CheckLayout(uintptr_t base) {
+    for (const LayoutCheck& c : kLayoutChecks) {
+        const uint8_t* p = (const uint8_t*)(base + c.rva);
+        bool found = false;
+        for (int i = 0; i + c.len <= c.within && !found; ++i) found = memcmp(p + i, c.bytes, (size_t)c.len) == 0;
+        if (!found) {
+            Log("writer: %s not found at RVA 0x%llX; save_fast_writer unavailable", c.name, (unsigned long long)c.rva);
             return false;
         }
     }
@@ -304,7 +299,7 @@ bool CheckHeads(uintptr_t base) {
 }  // namespace
 
 bool Install(uintptr_t base) {
-    if (!CheckHeads(base)) return false;
+    if (!CheckLayout(base)) return false;
     g_lexer = (LexerFn)(base + kRvaLexer);
     g_rebuild = (RebuildFn)(base + kRvaLexerRebuild);
     g_write_cstr = (void*)(base + kRvaWriteCStr);

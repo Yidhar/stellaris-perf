@@ -148,7 +148,7 @@ void FinishDay(uint64_t t_end) {
     g_ndays.store(n + 1, std::memory_order_release);
 }
 
-// ---- the hooks: 4.5.2 entry points, each checked against its first bytes ----
+// ---- the hooks: the entry points the SDK locates (tools/sdk_dumper/functions.py in the Stellaris MCP repository) ----
 using Fn = uint64_t (*)(void*, void*, void*, void*, uint64_t, uint64_t, uint64_t, uint64_t);
 Fn g_orig[kAll];
 
@@ -203,23 +203,22 @@ struct Target {
     Phase phase;
     uintptr_t rva;
     const char* name;
-    uint8_t head[8];
     void* detour;
 };
 const Target kTargets[] = {
-    { kMicro, 0x252CC0, "CGameState::MicroUpdate", { 0x48, 0x89, 0x4C, 0x24, 0x08, 0x55, 0x53, 0x56 }, (void*)&Detour<kMicro> },
-    { kDaily, 0x25BDB0, "CGameState::DailyUpdate", { 0x48, 0x89, 0x4C, 0x24, 0x08, 0x55, 0x53, 0x56 }, (void*)&Detour<kDaily> },
-    { kMonthly, 0x2605F0, "CGameState::MonthlyUpdate", { 0x40, 0x55, 0x56, 0x57, 0x41, 0x54, 0x41, 0x55 }, (void*)&Detour<kMonthly> },
-    { kYearly, 0x261EB0, "CGameState::YearlyUpdate", { 0x40, 0x55, 0x53, 0x56, 0x57, 0x41, 0x54, 0x41 }, (void*)&Detour<kYearly> },
-    { kAi, 0x2636C0, "CGameState::ProcessAI", { 0x48, 0x89, 0x4C, 0x24, 0x08, 0x55, 0x53, 0x56 }, (void*)&Detour<kAi> },
+    { kMicro, sdk::fn::CGameState_MicroUpdate, "CGameState::MicroUpdate", (void*)&Detour<kMicro> },
+    { kDaily, sdk::fn::CGameState_DailyUpdate, "CGameState::DailyUpdate", (void*)&Detour<kDaily> },
+    { kMonthly, sdk::fn::CGameState_MonthlyUpdate, "CGameState::MonthlyUpdate", (void*)&Detour<kMonthly> },
+    { kYearly, sdk::fn::CGameState_YearlyUpdate, "CGameState::YearlyUpdate", (void*)&Detour<kYearly> },
+    { kAi, sdk::fn::CGameState_ProcessAI, "CGameState::ProcessAI", (void*)&Detour<kAi> },
     // CInGameIdler::AutoSave only queues the save (CSaveGameTaskManager::Start); the game state is dumped by the next
     // frame's CSaveGameTaskManager::Update (called from the frame function through the idler, and from the OOS dump),
     // which runs the dump task on the main thread and draws frames while it waits for the rest.
-    { kSave, 0xA89AD0, "CSaveGameTaskManager::Update", { 0x40, 0x55, 0x53, 0x56, 0x57, 0x41, 0x54, 0x41 }, (void*)&Detour<kSave> },
-    { kDraw, 0x334160, "frame draw step", { 0x48, 0x89, 0x5C, 0x24, 0x08, 0x57, 0x48, 0x83 }, (void*)&Detour<kDraw> },
-    { kGui, 0x9293A0, "in-game idler update", { 0x48, 0x8B, 0xC4, 0x48, 0x89, 0x58, 0x10, 0x55 }, (void*)&Detour<kGui> },
-    { kGui2, 0x1C0A7A0, "GUI update", { 0x48, 0x89, 0x5C, 0x24, 0x20, 0x4C, 0x89, 0x44 }, (void*)&Detour<kGui2> },
-    { kApp, 0x1A4D610, "application update", { 0x40, 0x55, 0x56, 0x57, 0x41, 0x54, 0x41, 0x55 }, (void*)&Detour<kApp> },
+    { kSave, sdk::fn::CSaveGameTaskManager_Update, "CSaveGameTaskManager::Update", (void*)&Detour<kSave> },
+    { kDraw, sdk::fn::CGameIdler_DrawStep, "frame draw step", (void*)&Detour<kDraw> },
+    { kGui, sdk::fn::CInGameIdler_Update, "in-game idler update", (void*)&Detour<kGui> },
+    { kGui2, sdk::fn::Gui_Update, "GUI update", (void*)&Detour<kGui2> },
+    { kApp, sdk::fn::Application_Update, "application update", (void*)&Detour<kApp> },
 };
 
 const char* NameOf(int p) { return p < kCount ? kNames[p] : g_extra[p - kCount].name; }
@@ -264,8 +263,8 @@ bool Install(uintptr_t base) {
     int hooked = 0;
     for (const Target& t : kTargets) {
         uint8_t* p = (uint8_t*)(base + t.rva);
-        if (memcmp(p, t.head, sizeof t.head) != 0) {
-            Log("phase: %s at RVA 0x%llX does not start as expected; not timed", t.name, (unsigned long long)t.rva);
+        if (!IsFunctionStart(t.rva)) {
+            Log("phase: %s at RVA 0x%llX is not a function start; not timed", t.name, (unsigned long long)t.rva);
             continue;
         }
         if (MH_CreateHook(p, t.detour, (LPVOID*)&g_orig[t.phase]) != MH_OK || MH_EnableHook(p) != MH_OK) {

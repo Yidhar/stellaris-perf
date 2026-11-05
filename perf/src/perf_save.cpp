@@ -1,5 +1,6 @@
 #include "perf_save.hpp"
 #include "perf_tweaks.hpp"
+#include "stellaris_sdk.hpp"
 #include "MinHook.h"
 
 #include <windows.h>
@@ -12,13 +13,12 @@
 namespace perf::save {
 namespace {
 
-// 4.5.2 (entry bytes checked at install): the engine's variadic thunks and the runtime they call
-constexpr uintptr_t kRvaSprintf = 0xD38AA0;   // int sprintf(char* buf, const char* fmt, ...)
-constexpr uintptr_t kRvaSnprintf = 0x1B486D0;  // int snprintf(char* buf, size_t n, const char* fmt, ...)
-constexpr uintptr_t kRvaCore = 0x20353D4;      // __stdio_common_vsprintf(options, buf, count, fmt, locale, va_list)
-constexpr uintptr_t kRvaOptions = 0x15B620;    // returns &__local_stdio_printf_options
-const uint8_t kHeadSprintf[8] = { 0x48, 0x89, 0x54, 0x24, 0x10, 0x4C, 0x89, 0x44 };
-const uint8_t kHeadSnprintf[8] = { 0x4C, 0x89, 0x44, 0x24, 0x18, 0x4C, 0x89, 0x4C };
+// From the SDK (tools/sdk_dumper/functions.py in the Stellaris MCP repository): the engine's variadic thunks and the
+// runtime they call
+constexpr uintptr_t kRvaSprintf = sdk::fn::CRT_sprintf;               // int sprintf(char* buf, const char* fmt, ...)
+constexpr uintptr_t kRvaSnprintf = sdk::fn::CRT_snprintf;             // int snprintf(char* buf, size_t n, const char* fmt, ...)
+constexpr uintptr_t kRvaCore = sdk::fn::CRT_stdio_common_vsprintf;    // __stdio_common_vsprintf(options, buf, count, fmt, locale, va_list)
+constexpr uintptr_t kRvaOptions = sdk::fn::CRT_stdio_printf_options;  // returns &__local_stdio_printf_options
 constexpr uint64_t kSprintfOption = 1;   // the thunks OR these into the runtime's options
 constexpr uint64_t kSnprintfOption = 2;
 
@@ -247,10 +247,6 @@ void SelfTest() {
 }  // namespace
 
 bool Install(uintptr_t base) {
-    if (memcmp((const void*)(base + kRvaSprintf), kHeadSprintf, 8) != 0 || memcmp((const void*)(base + kRvaSnprintf), kHeadSnprintf, 8) != 0) {
-        Log("save: the sprintf / snprintf thunks do not start as expected; save_fast_format unavailable");
-        return false;
-    }
     g_core = (CoreFn)(base + kRvaCore);
     g_options = (OptionsFn)(base + kRvaOptions);
     SelfTest();

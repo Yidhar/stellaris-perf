@@ -2,7 +2,7 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-A performance plugin for **Stellaris 4.5.2** (Windows x64, the `-dx11` build): a small DLL that is loaded into
+A performance plugin for **Stellaris 4.5.3** (Windows x64, the `-dx11` build): a small DLL that is loaded into
 `stellaris.exe` and replaces a few slow engine code paths with equivalent, cheaper ones. It needs no mod and does not
 touch save files. It is a plugin of the **Stellaris launcher** (plugin spec v2): the launcher installs it, shows its
 settings file for editing, checks that it was made for the installed game build, and loads it when it starts the game.
@@ -20,7 +20,9 @@ The repository also contains the benchmark and stress-test tooling used to find 
   against the SDK and installs nothing on a mismatch. After a game patch the SDK subset has to be regenerated and the
   DLL rebuilt (see [Building](#building)).
 - Engine addresses are not hard-coded: they come from an SDK generated from the installed executable
-  (`sdk/stellaris_sdk.hpp`, a subset written by `tools/extract_sdk.py`).
+  (`sdk/stellaris_sdk.hpp`, a subset written by `tools/extract_sdk.py`). Every function the plugin hooks and every
+  call instruction it patches is located by a structural rule in the Stellaris MCP repository's
+  `tools/sdk_dumper/functions.py` (`sdk::fn`, `sdk::site`), so a game patch needs a new dump, not new addresses.
 - Mods are fine: the plugin changes how the engine computes, not what scripts or data say.
 - Multiplayer works like a gameplay mod: every player needs the plugin with the same settings (see
   [Multiplayer](#multiplayer)).

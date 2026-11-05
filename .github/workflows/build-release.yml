@@ -58,6 +58,8 @@ jobs:
           # the DLLs only work with the stellaris.exe build the SDK was generated from
           $ts = (Select-String -Path sdk/stellaris_sdk.hpp -Pattern "kExeTimestamp = (0x[0-9A-Fa-f]+)").Matches[0].Groups[1].Value
           $built = [DateTimeOffset]::FromUnixTimeSeconds([Convert]::ToInt64($ts, 16)).UtcDateTime.ToString("yyyy-MM-dd HH:mm 'UTC'")
+          # the game version that exe build belongs to (the SDK and the manifest carry only the build): update it with the SDK
+          $game = "4.5.3"
 
           # --- stellaris-perf: the plugin. The zip IS the plugin folder: unpack it into
           #     Documents\Paradox Interactive\Stellaris\plugins\stellaris-perf\, or install the unpacked folder with the launcher.
@@ -82,7 +84,7 @@ jobs:
           Copy-Item bench/README.md, bench/README.zh-CN.md $out/
           Copy-Item LICENSE $out/
           @(
-            "Built for the stellaris.exe whose PE timestamp is $ts ($built), Stellaris 4.5.2 (Windows x64).",
+            "Built for the stellaris.exe whose PE timestamp is $ts ($built), Stellaris $game (Windows x64).",
             "With any other build the DLLs log the mismatch and install nothing.",
             "The benchmark scripts expect the stellaris-perf plugin to be installed (see STELLARIS_PERF_DIR in README.md)."
           ) | Set-Content -Encoding utf8 "$out/GAME_BUILD.txt"
@@ -98,6 +100,7 @@ jobs:
           "version=$ver" >> $env:GITHUB_OUTPUT
           "exe_timestamp=$ts" >> $env:GITHUB_OUTPUT
           "exe_built=$built" >> $env:GITHUB_OUTPUT
+          "game_version=$game" >> $env:GITHUB_OUTPUT
 
       - uses: actions/upload-artifact@v7
         with:
@@ -113,7 +116,7 @@ jobs:
           generate_release_notes: true
           prerelease: ${{ contains(github.ref_name, '-') }}
           body: |
-            Built for **Stellaris 4.5.2** (Windows x64), `stellaris.exe` PE timestamp `${{ steps.package.outputs.exe_timestamp }}` (${{ steps.package.outputs.exe_built }}).
+            Built for **Stellaris ${{ steps.package.outputs.game_version }}** (Windows x64), `stellaris.exe` PE timestamp `${{ steps.package.outputs.exe_timestamp }}` (${{ steps.package.outputs.exe_built }}).
             The DLL only works with that exact game build; the launcher checks this from the manifest.
 
             - `stellaris-perf-*.zip`: the plugin, laid out as its plugin folder (`stl-plugin.json`, `stellaris_perf.dll`, `defaults\`). Unpack it into `Documents\Paradox Interactive\Stellaris\plugins\stellaris-perf\`, or unpack it anywhere and install the folder with the Stellaris launcher. Start the game with the launcher (`stl launch` or its Play button): that is what loads the plugin.

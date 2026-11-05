@@ -18,12 +18,10 @@
 namespace perf::nodes {
 namespace {
 
-// 4.5.2 entry points not in the SDK (checked against their first bytes)
-constexpr uintptr_t kRvaInvalidateChildren = 0x238430;  // CModifierNodeBase::InvalidateChildren(node, mask)
-constexpr uintptr_t kRvaModifierClear = 0x36DD30;       // the node modifier's virtual Clear (vtable slot 16): the first step of every rebuild
-constexpr uintptr_t kCascadeSite = 0x239793;            // the return address of AddInvalid inside the per-child Invalidate (0x239740)
-const uint8_t kHeadInvalidateChildren[8] = { 0x85, 0xD2, 0x0F, 0x84, 0x6B, 0x03, 0x00, 0x00 };
-const uint8_t kHeadModifierClear[8] = { 0x40, 0x53, 0x48, 0x83, 0xEC, 0x20, 0x48, 0x8B };
+// From the SDK (tools/sdk_dumper/functions.py in the Stellaris MCP repository)
+constexpr uintptr_t kRvaInvalidateChildren = sdk::fn::CModifierNodeBase_InvalidateChildren;  // CModifierNodeBase::InvalidateChildren(node, mask)
+constexpr uintptr_t kRvaModifierClear = sdk::fn::CModifier_ClearEntries;  // the node modifier's virtual Clear (vtable slot 16): the first step of every rebuild
+constexpr uintptr_t kCascadeSite = sdk::site::CModifierNodeBase_Invalidate_AddInvalid + 5;  // the return address of AddInvalid inside the per-child Invalidate
 constexpr ptrdiff_t kNodeId = 0x8;          // -1 = not registered
 constexpr ptrdiff_t kNodeCalc = 0x48;       // the std::function impl (its vtable slot 2 = _Do_call(impl, node) runs the owner's calc)
 constexpr ptrdiff_t kNodeDirty = 0x108;
@@ -146,9 +144,8 @@ uint32_t OwnerId(const void* node) {
 
 // A modifier type's key, from the engine's definitions table (CModifier::_Definitions: the array pointer, its count at
 // +0xC; 0xB0-byte entries with the key as a Clausewitz string at +0x10: 16 inline bytes or a heap pointer, then size and
-// capacity). The table's address is the one the planet calc reads its category masks from (checked at install).
-constexpr uintptr_t kRvaModifierDefinitions = 0x2814390;
-constexpr uintptr_t kRvaDefinitionsRef = 0xE0438D;  // `mov r9, [rip + disp]` in CPlanet::CalculateModifier
+// capacity). The table is the SDK's sdk::glob::CModifier_Definitions.
+constexpr uintptr_t kRvaModifierDefinitions = sdk::glob::CModifier_Definitions;
 bool g_defs_ok = false;
 
 bool ReadTypeName(uint32_t type, char* out, size_t cap_out) {
@@ -260,6 +257,8 @@ uintptr_t CalcOf(const void* impl) {
 }
 
 uint64_t NodeHash(const void* node);
+void LearnDoCall(const void* node);
+bool DelegateHooked(const void* node);
 
 // ---- modifier_cascade_gate ----
 // The eager cascade of CCountry::InvalidateModifier (the country's main node) and of the relay network node's
@@ -267,11 +266,12 @@ uint64_t NodeHash(const void* node);
 // invalidating thread, right after the engine registers it, and its children are invalidated the engine's own way
 // (InvalidateChildren with every category) only when the rebuilt content differs from the content they were built
 // from. The masked cascades the rebuild itself makes are dropped meanwhile (they find no linked child in the engine
-// either, which unlinks the children at the invalidation).
-constexpr uintptr_t kGateCalls[] = { 0x23EFD7, 0x574E06, 0x752EF8 };  // the InvalidateChildren calls held
+// either, which unlinks the children at the invalidation). The held nodes' rebuild delegates (the std::function
+// _Do_call of CCountry's nodes and the relay manager's) are learned from the nodes at their first held invalidation
+// and hooked at the next day change; until then the engine's cascade runs.
+constexpr uintptr_t kGateCalls[] = { sdk::site::CCountry_InvalidateModifier_InvalidateChildren, sdk::site::CCountry_InvalidateRelayNetworkModifier_InvalidateChildren,
+                                     sdk::site::CCountryRelayNetworkManager_UpdateRelayNetwork_InvalidateChildren };  // the InvalidateChildren calls held
 constexpr int kGateSites = 3;
-constexpr uintptr_t kGateDelegates[] = { 0x77D8B0, 0xAD5910 };  // the rebuild delegates (std::function _Do_call) of CCountry's nodes and the relay manager's
-const uint8_t kHeadGateDelegate[2][8] = { { 0x48, 0x8B, 0x41, 0x08, 0x4C, 0x8B, 0xC9, 0x44 }, { 0x48, 0x8B, 0x41, 0x08, 0x4C, 0x8B, 0x00, 0x41 } };
 uintptr_t g_gate_sites[kGateSites];
 bool g_gate_ok = false;
 std::atomic<int> g_gate_mode{ 0 };
@@ -288,6 +288,7 @@ thread_local void* t_gate_node = nullptr;  // the node whose cascade was just he
 thread_local void* t_rb_any = nullptr;     // the node being rebuilt on this thread
 std::atomic<uint64_t> g_gate_held{ 0 }, g_gate_worker{ 0 }, g_gate_released{ 0 }, g_gate_suppressed{ 0 }, g_gate_rebuild_cycles{ 0 };
 std::atomic<uint64_t> g_gate_masked{ 0 }, g_gate_counted{ 0 }, g_gate_mismatch{ 0 };
+std::atomic<uint64_t> g_gate_unhooked{ 0 };  // held invalidations run the engine's way because the node's delegate was not hooked yet
 using NodeFn = uint64_t (*)(void*);
 
 GateRow* FindGate(const void* node, bool create) {
@@ -569,7 +570,12 @@ void InvalidateChildrenDetour(void* node, uint32_t mask) {
         } else if (t_depth == 0 && mask == 0xFFFFFFFFu && IsGateSite((uintptr_t)_ReturnAddress())) {
             const bool main = GetCurrentThreadId() == g_main_tid.load(std::memory_order_relaxed);
             if (main || gm >= 2) {
-                if (GateRow* g = FindGate(node, true)) {
+                if (!DelegateHooked(node)) {
+                    // the node's rebuild delegate is hooked at the next day change (InstallDoCalls); until then the
+                    // engine's cascade runs
+                    LearnDoCall(node);
+                    g_gate_unhooked.fetch_add(1, std::memory_order_relaxed);
+                } else if (GateRow* g = FindGate(node, true)) {
                     if (!g->pending.exchange(1, std::memory_order_acq_rel)) {
                         g->pre_hash.store(NodeHash(node), std::memory_order_relaxed);
                         g_gate_pending_n.fetch_add(1, std::memory_order_relaxed);
@@ -638,6 +644,16 @@ void LearnDoCall(const void* node) {
             return;
         }
     }
+}
+
+// Whether the node's rebuild delegate is hooked (Rebuild resolves a held gate when the rebuild ends)
+bool DelegateHooked(const void* node) {
+    const uintptr_t fn = DoCallOf(node);
+    if (!fn) return false;
+    const int n = g_docall_n.load(std::memory_order_acquire);
+    for (int i = 0; i < n; ++i)
+        if (g_docall[i].fn.load(std::memory_order_relaxed) == fn) return g_docall[i].installed.load(std::memory_order_acquire);
+    return false;
 }
 
 // The modifier belongs to a registered node (the Clear is the CPdxModifier's, called on stand-alone modifiers too):
@@ -789,17 +805,6 @@ bool Install(uintptr_t base) {
             return false;
         }
     }
-    struct Check { uintptr_t rva; const uint8_t* head; const char* name; };
-    const Check checks[] = {
-        { kRvaInvalidateChildren, kHeadInvalidateChildren, "CModifierNodeBase::InvalidateChildren" },
-        { kRvaModifierClear, kHeadModifierClear, "the node modifier's Clear" },
-    };
-    for (const Check& c : checks) {
-        if (memcmp((const void*)(base + c.rva), c.head, 8) != 0) {
-            Log("nodes: %s at RVA 0x%llX does not start as expected; node_trace unavailable", c.name, (unsigned long long)c.rva);
-            return false;
-        }
-    }
     LARGE_INTEGER f;
     QueryPerformanceFrequency(&f);
     const uint64_t c0 = __rdtsc();
@@ -820,12 +825,8 @@ bool Install(uintptr_t base) {
     }
     g_installed = true;
     Log("nodes: hooked CModifierNodeBase::InvalidateChildren and the node modifier's Clear (node_trace)");
-    {
-        // the modifier definitions table, for the diagnostics' type names: `mov r9, [rip + disp]` (4C 8B 0D disp32)
-        const uint8_t* p = (const uint8_t*)(base + kRvaDefinitionsRef);
-        g_defs_ok = p[0] == 0x4C && p[1] == 0x8B && p[2] == 0x0D && kRvaDefinitionsRef + 7 + (uintptr_t)(int64_t)*(const int32_t*)(p + 3) == kRvaModifierDefinitions;
-    }
-    // the cascade gate: its call sites and the two delegates, hooked now
+    g_defs_ok = true;  // the modifier definitions table (sdk::glob::CModifier_Definitions), for the diagnostics' type names
+    // the cascade gate: its call sites (the delegates are learned and hooked as the nodes are first seen)
     bool gate = true;
     for (int i = 0; i < kGateSites; ++i) {
         const uint8_t* p = (const uint8_t*)(base + kGateCalls[i]);
@@ -834,22 +835,6 @@ bool Install(uintptr_t base) {
             gate = false;
         }
         g_gate_sites[i] = base + kGateCalls[i] + 5;
-    }
-    for (int i = 0; i < 2 && gate; ++i) {
-        if (memcmp((const void*)(base + kGateDelegates[i]), kHeadGateDelegate[i], 8) != 0) {
-            Log("nodes: the rebuild delegate at RVA 0x%llX does not start as expected; modifier_cascade_gate unavailable", (unsigned long long)kGateDelegates[i]);
-            gate = false;
-            break;
-        }
-        const int k = g_docall_n.load();
-        g_docall[k].fn.store(base + kGateDelegates[i]);
-        g_docall[k].cat.store(-1);
-        g_docall_n.store(k + 1);
-    }
-    if (gate) {
-        InstallDoCalls();
-        for (int i = 0; i < 2; ++i)
-            if (g_docall[i].fn.load() <= 1) gate = false;  // the install failed and cleared it
     }
     g_gate_ok = gate;
     if (gate) Log("nodes: the country and relay node cascades gated at their 3 call sites (modifier_cascade_gate)");
@@ -1003,8 +988,8 @@ void OnPlanetCalc(const void* planet, const void* node) {
 
 void OnDay(uint32_t day) {
     g_main_tid.store(GetCurrentThreadId(), std::memory_order_relaxed);
+    InstallDoCalls();  // the delegates node_trace or the gate learned, hooked between ticks
     if (!g_trace.load(std::memory_order_relaxed)) return;
-    InstallDoCalls();
     if (g_day0 == 0) {
         g_day0 = day;
         g_last_day = day;
@@ -1106,14 +1091,14 @@ void Dump() {
 
 std::string Stats() {
     if (!g_installed) return "modifier_cascade_gate=unavailable | node_trace=unavailable";
-    char buf[300];
+    char buf[360];
     snprintf(buf, sizeof buf,
-             "modifier_cascade_gate=%d(held=%llu worker_passed=%llu released=%llu suppressed=%llu rebuild_ms=%.1f masked=%llu counted=%llu mismatch=%llu)"
-             " | node_trace=%d(days=%llu dumps=%llu)",
+             "modifier_cascade_gate=%d(held=%llu worker_passed=%llu released=%llu suppressed=%llu rebuild_ms=%.1f masked=%llu counted=%llu mismatch=%llu"
+             " unhooked=%llu) | node_trace=%d(days=%llu dumps=%llu)",
              g_gate_ok ? g_gate_mode.load() : -1, (unsigned long long)g_gate_held.load(), (unsigned long long)g_gate_worker.load(),
              (unsigned long long)g_gate_released.load(), (unsigned long long)g_gate_suppressed.load(), (double)g_gate_rebuild_cycles.load() * g_ms_per_cycle,
-             (unsigned long long)g_gate_masked.load(), (unsigned long long)g_gate_counted.load(), (unsigned long long)g_gate_mismatch.load(), g_trace.load(),
-             (unsigned long long)g_days, (unsigned long long)g_dumps);
+             (unsigned long long)g_gate_masked.load(), (unsigned long long)g_gate_counted.load(), (unsigned long long)g_gate_mismatch.load(),
+             (unsigned long long)g_gate_unhooked.load(), g_trace.load(), (unsigned long long)g_days, (unsigned long long)g_dumps);
     return buf;
 }
 

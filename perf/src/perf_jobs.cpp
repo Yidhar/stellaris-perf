@@ -1,4 +1,5 @@
 #include "perf_jobs.hpp"
+#include "stellaris_sdk.hpp"
 #include "perf_colony.hpp"
 #include "perf_shared.hpp"
 #include "perf_tweaks.hpp"
@@ -14,13 +15,12 @@
 namespace perf::jobs {
 namespace {
 
-// 4.5.2: NPlanetJobs::UpdatePopJobs(const CGameDate*, const CPdxSpan<TPdxRef<CColony>>*) and the two pairs of calls
-// to it, as the `call` instructions (checked at install): NColonyUpdate::MonthlyUpdate (0xE3BFA0) and the cheat-mode
-// daily variant (0xE3BF20). The second call of each pair is the one skipped.
-constexpr uintptr_t kRvaUpdatePopJobs = 0xB25DF0;
-const uint8_t kHead[8] = { 0x48, 0x89, 0x5C, 0x24, 0x10, 0x48, 0x89, 0x6C };
-constexpr uintptr_t kFirstCalls[] = { 0xE3C189, 0xE3BF5E };
-constexpr uintptr_t kSecondCalls[] = { 0xE3C1AE, 0xE3BF86 };
+// NPlanetJobs::UpdatePopJobs(const CGameDate*, const CPdxSpan<TPdxRef<CColony>>*) and the two pairs of calls to it, as
+// the `call` instructions (from the SDK, checked at install): NColonyUpdate::MonthlyUpdate and the cheat-mode daily
+// variant. The second call of each pair is the one skipped.
+constexpr uintptr_t kRvaUpdatePopJobs = sdk::fn::NPlanetJobs_UpdatePopJobs;
+constexpr uintptr_t kFirstCalls[] = { sdk::site::NColonyUpdate_MonthlyUpdate_UpdatePopJobs_0, sdk::site::NColonyUpdate_DailyUpdatePopJobs_UpdatePopJobs_0 };
+constexpr uintptr_t kSecondCalls[] = { sdk::site::NColonyUpdate_MonthlyUpdate_UpdatePopJobs_1, sdk::site::NColonyUpdate_DailyUpdatePopJobs_UpdatePopJobs_1 };
 constexpr int kPairs = 2;
 
 using Fn = uint64_t (*)(void*, void*, void*, void*, uint64_t, uint64_t, uint64_t, uint64_t);
@@ -34,7 +34,7 @@ std::atomic<uint64_t> g_first_calls{ 0 }, g_second_calls{ 0 }, g_skipped{ 0 };
 std::atomic<uint64_t> g_first_us{ 0 }, g_first_max_us{ 0 }, g_second_us{ 0 };
 double g_qpc_us = 0;
 
-// pop_faction_batch: CPopFaction::UpdateSupportAndApproval (4.5.2 0x699D60; Linux 1088784), which the engine runs for
+// pop_faction_batch: CPopFaction::UpdateSupportAndApproval (Linux line 1088784), which the engine runs for
 // every faction a pop group belongs to each time pops move between groups (the collapse and the promotions of a
 // pass): CalcSupport, then CalcApproval (the faction type's demands, scripted triggers), then, when the approval
 // changed, the member groups' modifier nodes invalidated and the owner flagged. Within one pass nothing reads a
@@ -42,15 +42,13 @@ double g_qpc_us = 0;
 // once per faction when the pass ends (in order of first appearance): the same final values from the same final
 // state; a faction whose values changed and changed back inside the pass is not invalidated or flagged then.
 // Modes: 0 = the engine's calls as they come, counted and timed inside the passes; 1 = batched over each pass;
-// 2 = batched over the whole NColonyUpdate::MonthlyUpdate (0xE3BFA0: growth, migration, decline, assembly, the two
+// 2 = batched over the whole NColonyUpdate::MonthlyUpdate (growth, migration, decline, assembly, the two
 // passes), which also covers the moves of the monthly colony pass; 3 = verify: the engine's calls as they come, and
 // at the end of each pass every faction touched is recomputed once more from the final state and its stored support
 // and approval compared with what the engine's last call left (a mismatch is logged and counted); 4 = the same
 // check over the whole monthly update (mode 2's window).
-constexpr uintptr_t kRvaUpdateSupportAndApproval = 0x699D60;
-const uint8_t kHeadFaction[8] = { 0x40, 0x55, 0x48, 0x83, 0xEC, 0x40, 0x48, 0x8B };
-constexpr uintptr_t kRvaColonyMonthlyUpdate = 0xE3BFA0;  // NColonyUpdate::MonthlyUpdate (the caller of the two passes)
-const uint8_t kHeadColonyMonthly[8] = { 0x48, 0x89, 0x5C, 0x24, 0x10, 0x48, 0x89, 0x6C };
+constexpr uintptr_t kRvaUpdateSupportAndApproval = sdk::fn::CPopFaction_UpdateSupportAndApproval;
+constexpr uintptr_t kRvaColonyMonthlyUpdate = sdk::fn::NColonyUpdate_MonthlyUpdate;  // the caller of the two passes
 constexpr size_t kFactionSupport = 0x40;  // 16 bytes of support, then the approval at +0x50 (8 bytes)
 constexpr size_t kFactionValues = 0x18;
 using FactionFn = void (*)(void*);
@@ -219,11 +217,6 @@ bool Install(uintptr_t base) {
     LARGE_INTEGER freq;
     QueryPerformanceFrequency(&freq);
     g_qpc_us = 1e6 / (double)freq.QuadPart;
-    if (memcmp((const void*)(base + kRvaUpdatePopJobs), kHead, 8) != 0) {
-        Log("jobs: NPlanetJobs::UpdatePopJobs at RVA 0x%llX does not start as expected; pop_jobs_single_pass unavailable",
-            (unsigned long long)kRvaUpdatePopJobs);
-        return false;
-    }
     for (int i = 0; i < kPairs; ++i) {
         if (!CallsTo(kFirstCalls[i], kRvaUpdatePopJobs) || !CallsTo(kSecondCalls[i], kRvaUpdatePopJobs)) {
             Log("jobs: no pair of calls to UpdatePopJobs at RVA 0x%llX / 0x%llX; pop_jobs_single_pass unavailable",
@@ -240,16 +233,6 @@ bool Install(uintptr_t base) {
     }
     g_installed = true;
     Log("jobs: hooked NPlanetJobs::UpdatePopJobs (pop_jobs_single_pass)");
-    if (memcmp((const void*)(base + kRvaUpdateSupportAndApproval), kHeadFaction, 8) != 0) {
-        Log("jobs: CPopFaction::UpdateSupportAndApproval at RVA 0x%llX does not start as expected; pop_faction_batch unavailable",
-            (unsigned long long)kRvaUpdateSupportAndApproval);
-        return true;
-    }
-    if (memcmp((const void*)(base + kRvaColonyMonthlyUpdate), kHeadColonyMonthly, 8) != 0) {
-        Log("jobs: NColonyUpdate::MonthlyUpdate at RVA 0x%llX does not start as expected; pop_faction_batch unavailable",
-            (unsigned long long)kRvaColonyMonthlyUpdate);
-        return true;
-    }
     const LPVOID faction = (LPVOID)(base + kRvaUpdateSupportAndApproval), monthly = (LPVOID)(base + kRvaColonyMonthlyUpdate);
     if (MH_CreateHook(faction, (LPVOID)&FactionDetour, (LPVOID*)&g_orig_faction) != MH_OK ||
         MH_CreateHook(monthly, (LPVOID)&ColonyMonthlyDetour, (LPVOID*)&g_orig_colony_monthly) != MH_OK ||

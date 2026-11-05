@@ -17,7 +17,7 @@ import sys
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 SCAN_DIRS = [os.path.join(ROOT, "perf"), os.path.join(ROOT, "bench")]
-NAMESPACES = ("glob", "db", "rt", "vt", "fn")
+NAMESPACES = ("glob", "db", "rt", "vt", "fn", "site")
 
 
 def used_symbols():
@@ -56,7 +56,7 @@ def main():
 
     # preamble: the exe timestamp and the top-level constants the sources use (e.g. sdk::kRvaEngineAlloc); CmdSpec and
     # the rest of the full header are not used here
-    first_ns = next(i for i, l in enumerate(lines) if re.match(r"namespace (glob|db|rt|vt|fn) \{", l))
+    first_ns = next(i for i, l in enumerate(lines) if re.match(r"namespace (glob|db|rt|vt|fn|site) \{", l))
     wanted = {"kExeTimestamp"} | {t for t in top if re.match(r"k[A-Z]", t)}
     preamble = [l for l in lines[:first_ns] if l.lstrip().startswith("inline constexpr")
                 and any(re.search(r"\b" + re.escape(t) + r"\b", l.split("=")[0]) for t in wanted)]

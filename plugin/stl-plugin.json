@@ -5,7 +5,7 @@
   "version": "0.4.0",
   "description": "Faster fleet updates, fleet manager window and flag checks, optional per-day caches. Multiplayer: every player needs the plugin with the same settings.",
   "dll": "stellaris_perf.dll",
-  "game": { "exe_timestamps": ["0x6ABEAA3F"] },
+  "game": { "exe_timestamps": ["0x6AE49C1B"] },
   "load": { "wait": "window", "delay_ms": 1500 },
   "config": [
     { "file": "stellaris_perf.ini", "default": "defaults/stellaris_perf.ini", "title": "Performance", "substitute": false }

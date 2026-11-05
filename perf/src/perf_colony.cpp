@@ -15,40 +15,37 @@
 namespace perf::colony {
 namespace {
 
-// 4.5.2 entry points not in the SDK (each checked against its first bytes) and the offsets the engine's own code uses
-constexpr uintptr_t kRvaMonthlySerial = 0xDC43E0;   // CColony::MonthlyUpdateSerial(this, SDemographySafePrivate*, int*)
-constexpr uintptr_t kRvaNodeClear = 0x30E9F0;       // CModifierNodeBase::Clear(node)
-constexpr uintptr_t kRvaCachedValues = 0xDD6950;    // CColony::MicroUpdateCachedValues(this, CModifier*) -> bool changed
-constexpr uintptr_t kRvaInvalidate = 0xDACEF0;      // CColony::InvalidateModifier(this)
+// The entry points, from the SDK (tools/sdk_dumper/functions.py in the Stellaris MCP repository), and the offsets the
+// engine's own code uses
+constexpr uintptr_t kRvaMonthlySerial = sdk::fn::CColony_MonthlyUpdateSerial;    // CColony::MonthlyUpdateSerial(this, SDemographySafePrivate*, int*)
+constexpr uintptr_t kRvaNodeClear = sdk::fn::CModifierNodeBase_Clear;            // CModifierNodeBase::Clear(node)
+constexpr uintptr_t kRvaCachedValues = sdk::fn::CColony_MicroUpdateCachedValues;  // CColony::MicroUpdateCachedValues(this, CModifier*) -> bool changed
+constexpr uintptr_t kRvaInvalidate = sdk::fn::CColony_InvalidateModifier;         // CColony::InvalidateModifier(this)
 constexpr ptrdiff_t kColonyNode = 0x120;            // the colony's modifier node
 constexpr ptrdiff_t kColonyModifier = 0x170;        // the CModifier the cached values are computed from
 constexpr ptrdiff_t kColonyFlags = 0x1088;          // bit 2 set: the node is cleared instead of updated
 
-const uint8_t kHeadMonthly[8] = { 0x48, 0x89, 0x5C, 0x24, 0x10, 0x48, 0x89, 0x74 };
-const uint8_t kHeadUpdate[8] = { 0x48, 0x89, 0x5C, 0x24, 0x08, 0x57, 0x48, 0x83 };
-const uint8_t kHeadCached[8] = { 0x40, 0x53, 0x41, 0x56, 0x48, 0x83, 0xEC, 0x28 };
-const uint8_t kHeadClear[8] = { 0x40, 0x53, 0x48, 0x83, 0xEC, 0x20, 0x48, 0x8B };
-const uint8_t kHeadInvalidate[8] = { 0x48, 0x89, 0x5C, 0x24, 0x08, 0x57, 0x48, 0x83 };
 
-// The refreshes the engine forces after every change, as the `call` instructions that make them (the detours see the
-// return address, 5 bytes on):
-//   CColony::OnAddPops tail (0xDAFAB8)   0xDAFAD3 Update(colony node)   0xDAFAE2 MicroUpdateCachedValues(colony)
-//   CColony::OnRemovePops   (0xDAFB10)   0xDAFB55 Update(colony node)   0xDAFB64 MicroUpdateCachedValues(colony)
-//   AddSize to a new pop group     (0xDB0BB0)   0xDB0C34 Update(the new group's node)
-//   MoveSizeFrom to a new pop group (0xDB0C60)  0xDB0CF0 / 0xDB0CF9 Update(source / new group's node)
+// The refreshes the engine forces after every change, as the `call` instructions that make them (the SDK's call
+// sites; the detours see the return address, 5 bytes on):
+//   CColony::OnAddPops tail            Update(colony node)   MicroUpdateCachedValues(colony)
+//   CColony::OnRemovePops              Update(colony node)   MicroUpdateCachedValues(colony)
+//   AddSize to a new pop group         Update(the new group's node)
+//   MoveSizeFrom to a new pop group    Update(source / new group's node)
 // In the first two the Update is skipped only for the colony whose pass is running: any other colony touched from
 // inside the pass (an event effect) gets its cached values recomputed at once, which needs its node fresh.
-constexpr uintptr_t kColonyUpdateCalls[] = { 0xDAFAD3, 0xDAFB55 };
-constexpr uintptr_t kGroupUpdateCalls[] = { 0xDB0C34, 0xDB0CF0, 0xDB0CF9 };
-constexpr uintptr_t kCachedCalls[] = { 0xDAFAE2, 0xDAFB64 };
+constexpr uintptr_t kColonyUpdateCalls[] = { sdk::site::CColony_OnAddPops_NodeUpdate, sdk::site::CColony_OnRemovePops_NodeUpdate };
+constexpr uintptr_t kGroupUpdateCalls[] = { sdk::site::CColony_AddSizeToPopGroup_NodeUpdate, sdk::site::CColony_MoveSizeToPopGroup_NodeUpdate_0,
+                                            sdk::site::CColony_MoveSizeToPopGroup_NodeUpdate_1 };
+constexpr uintptr_t kCachedCalls[] = { sdk::site::CColony_OnAddPops_CachedValues, sdk::site::CColony_OnRemovePops_CachedValues };
 constexpr int kColonySites = 2, kGroupSites = 3, kCachedSites = 2;
 constexpr int kMaxPending = 64;  // skipped pop-group refreshes per pass; beyond that they run as the engine does
 
 // pop_jobs_node_batch: the two refreshes the pop-job pass forces for every pop group it creates. The promotion loop
-// of NPlanetJobs::AssignPopsToJobs (0xB35F30, the tail of every UpdatePopJobs pass) has
+// of NPlanetJobs::AssignPopsToJobs (the tail of every UpdatePopJobs pass) has
 // CColony::AccessOrAddPopGroupMoveSizeFrom inlined: a move into an existing group is CPopGroup::MoveSizeFrom alone, a
 // move into a new group is followed by CModifierNodeBase::Update of the source group's node and of the new group's
-// node (the calls at 0xB364C1 / 0xB364CA; the out-of-line copy used by growth and migration is the pair above). Each
+// node (the SDK's two call sites; the out-of-line copy used by growth and migration is the pair above). Each
 // of them rebuilds the colony's and the planet's node first, dirty again at every one of them (a group's rebuild
 // invalidates them: replaying the refreshes at the end of the pass costs the same, mode 1), so on a late save the
 // two calls are 6 ms of a 50 ms pass (half of it the colony and planet rebuilds, scripted triggers), while nothing in
@@ -67,9 +64,9 @@ constexpr int kMaxPending = 64;  // skipped pop-group refreshes per pass; beyond
 //   3: measurement: 2, and the nodes left dirty watched until the next pass (reread_in / reread_out = rebuilt on demand
 //      inside / outside the monthly update, timed; flushed = clean at the next pass without a rebuild seen, the
 //      manager's flush; unread = still dirty at the next pass).
-constexpr uintptr_t kJobsUpdateCalls[] = { 0xB364C1, 0xB364CA };
+constexpr uintptr_t kJobsUpdateCalls[] = { sdk::site::NPlanetJobs_AssignPopsToJobs_NodeUpdate_0, sdk::site::NPlanetJobs_AssignPopsToJobs_NodeUpdate_1 };
 constexpr int kJobsSites = 2;
-// pop_jobs_flush_first (experimental, off): the loop at the start of UpdatePopJobs (0xB25E20) runs
+// pop_jobs_flush_first (experimental, off): the loop at the start of UpdatePopJobs runs
 // CColony::UpdateModifier for every colony (inlined: Update of the colony's node at +0x120, or Clear when flag bit 2 of
 // +0x1088 is set), serially on the main thread, and after the colony monthly pass every colony's node and its planet's
 // are dirty (CColony::InvalidateModifier invalidates the carrier planet too, and each one's rebuild re-marks the
@@ -78,15 +75,13 @@ constexpr int kJobsSites = 2;
 // the flush, every dirty node of the game, costs 13 ms) or has the loop's Updates skipped (mode 2: 9 ms less in the
 // pass, which then works from the colonies' last rebuilt state, not the engine's result, and a quarter more colony and
 // a third more planet rebuilds over the month, in the daily flush). Neither pays; both are kept for measurement.
-constexpr uintptr_t kJobsColonyUpdateCall = 0xB25E9D;
-// Where the colony and planet modifier rebuilds happen (CColony::CalcModifier 0xDAD840 and the planet's 0xE04060, the
+constexpr uintptr_t kJobsColonyUpdateCall = sdk::site::NPlanetJobs_UpdatePopJobs_ColonyNodeUpdate;
+// Where the colony and planet modifier rebuilds happen (CColony::CalculateModifier and CPlanet::CalculateModifier, the
 // functions the nodes' rebuild runs, from Update or from the manager's flush): counted and timed per context, so the
 // cost the pass no longer pays can be seen moving. Contexts: the first pop-job pass on its own thread, the pass on a
 // worker thread (its parallel sections and the manager's flush), the rest of the monthly update, any other time.
-constexpr uintptr_t kRvaColonyCalc = 0xDAD840;
-constexpr uintptr_t kRvaPlanetCalc = 0xE04060;
-const uint8_t kHeadColonyCalc[8] = { 0x48, 0x89, 0x4C, 0x24, 0x08, 0x55, 0x56, 0x48 };
-const uint8_t kHeadPlanetCalc[8] = { 0x48, 0x89, 0x54, 0x24, 0x10, 0x48, 0x89, 0x4C };
+constexpr uintptr_t kRvaColonyCalc = sdk::fn::CColony_CalculateModifier;
+constexpr uintptr_t kRvaPlanetCalc = sdk::fn::CPlanet_CalculateModifier;
 constexpr int kMaxJobsPending = 4096;  // nodes per pass; beyond that the engine's refreshes run as they come
 constexpr ptrdiff_t kNodeDirty = 0x108;  // CModifierNodeBase: the byte Update tests and clears
 
@@ -404,20 +399,6 @@ void JobsColonyLoopStats(uint64_t* calls, uint64_t* us, uint64_t* skipped) {
 
 bool Install(uintptr_t base) {
     g_base = base;
-    struct Check { uintptr_t rva; const uint8_t* head; const char* name; };
-    const Check checks[] = {
-        { kRvaMonthlySerial, kHeadMonthly, "CColony::MonthlyUpdateSerial" },
-        { sdk::fn::CModifierNodeBase_Update, kHeadUpdate, "CModifierNodeBase::Update" },
-        { kRvaCachedValues, kHeadCached, "CColony::MicroUpdateCachedValues" },
-        { kRvaNodeClear, kHeadClear, "CModifierNodeBase::Clear" },
-        { kRvaInvalidate, kHeadInvalidate, "CColony::InvalidateModifier" },
-    };
-    for (const Check& c : checks) {
-        if (memcmp((const void*)(base + c.rva), c.head, 8) != 0) {
-            Log("colony: %s at RVA 0x%llX does not start as expected; colony_monthly_batch unavailable", c.name, (unsigned long long)c.rva);
-            return false;
-        }
-    }
     if (!Sites(kColonyUpdateCalls, kColonySites, sdk::fn::CModifierNodeBase_Update, g_colony_sites, "CModifierNodeBase::Update", "colony_monthly_batch") ||
         !Sites(kGroupUpdateCalls, kGroupSites, sdk::fn::CModifierNodeBase_Update, g_group_sites, "CModifierNodeBase::Update", "colony_monthly_batch") ||
         !Sites(kCachedCalls, kCachedSites, kRvaCachedValues, g_cached_sites, "CColony::MicroUpdateCachedValues", "colony_monthly_batch")) {
@@ -450,16 +431,16 @@ bool Install(uintptr_t base) {
         }
     }
     // the rebuild accounting (statistics only)
-    if (memcmp((const void*)(base + kRvaColonyCalc), kHeadColonyCalc, 8) == 0 && memcmp((const void*)(base + kRvaPlanetCalc), kHeadPlanetCalc, 8) == 0) {
+    {
         const LPVOID cc = (LPVOID)(base + kRvaColonyCalc), pc = (LPVOID)(base + kRvaPlanetCalc);
         if (MH_CreateHook(cc, (LPVOID)&ColonyCalcDetour, (LPVOID*)&g_orig_colony_calc) == MH_OK &&
             MH_CreateHook(pc, (LPVOID)&PlanetCalcDetour, (LPVOID*)&g_orig_planet_calc) == MH_OK &&
             MH_EnableHook(cc) == MH_OK && MH_EnableHook(pc) == MH_OK) {
             g_calc_installed = true;
             Log("colony: hooked the colony and planet modifier rebuilds (node_rebuilds statistics)");
+        } else {
+            Log("colony: could not hook the colony / planet modifier rebuilds; node_rebuilds statistics unavailable");
         }
-    } else {
-        Log("colony: the colony / planet modifier rebuild functions do not start as expected; node_rebuilds statistics unavailable");
     }
     return true;
 }

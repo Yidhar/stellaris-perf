@@ -23,6 +23,7 @@ from benchlib import PERF_LOGS, game_pid
 TABLES = {
     0x6AB5181D: (0x2831870, 0x35F0AC0),  # 4.5.1
     0x6ABEAA3F: (0x2832870, 0x35F22F0),  # 4.5.2
+    0x6AE49C1B: (0x2837870, 0x35F72B0),  # 4.5.3
 }
 TOP = int(sys.argv[1]) if len(sys.argv) > 1 else 25
 

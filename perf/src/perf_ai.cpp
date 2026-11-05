@@ -1,6 +1,7 @@
 #include "perf_ai.hpp"
 #include "perf_tweaks.hpp"
 #include "perf_shared.hpp"
+#include "stellaris_sdk.hpp"
 #include "MinHook.h"
 
 #include <windows.h>
@@ -14,17 +15,15 @@
 namespace perf::ai {
 namespace {
 
-// 4.5.2 (entry bytes checked at install)
-constexpr uintptr_t kRvaUpdateAIParallel = 0xB86900;  // UpdateAIParallel(CCountryAI* const* countries, int n)
-const uint8_t kHeadParallel[8] = { 0x48, 0x89, 0x5C, 0x24, 0x10, 0x55, 0x56, 0x57 };
+// From the SDK (tools/sdk_dumper/functions.py in the Stellaris MCP repository)
+constexpr uintptr_t kRvaUpdateAIParallel = sdk::fn::UpdateAIParallel;  // UpdateAIParallel(CCountryAI* const* countries, int n)
 // CPdxParallelForDescriptor::CPdxParallelForDescriptor(this, begin, end, job type, max tasks, pair<scheduler,
 // priority>*): writes the task count (threads of the priority + 1; the max-task argument is not used on Windows) to
 // +0x14 and the chunk size to +0x18. CPdxTaskScheduler::CreateTasks takes its serial path when CalcNumTasks() == 1,
 // i.e. when that count is 1.
-constexpr uintptr_t kRvaDescriptorCtor = 0x1B50060;
-const uint8_t kHeadDescriptor[8] = { 0x48, 0x89, 0x5C, 0x24, 0x08, 0x48, 0x89, 0x74 };
+constexpr uintptr_t kRvaDescriptorCtor = sdk::fn::CPdxParallelForDescriptor_Ctor;
 constexpr ptrdiff_t kDescriptorTasks = 0x14;
-// The per-country entry the parallel-for calls on every element: CCountryAI vtable slot 7 (0xB6EF20 in 4.5.2), which
+// The per-country entry the parallel-for calls on every element: CCountryAI vtable slot 7, which
 // checks that the country has an AI and is alive and then tail-calls the base update (which runs the AI proper
 // through slot 8 and more). Hooked per AI class, found through the objects' vtables.
 constexpr int kUpdateSlot = 7;
@@ -230,10 +229,6 @@ uint64_t ParallelDetour(void* arr_, void* n_, void* c, void* d, uint64_t e, uint
 
 bool Install(uintptr_t base) {
     g_base = base;
-    if (memcmp((const void*)(base + kRvaUpdateAIParallel), kHeadParallel, 8) != 0) {
-        Log("ai: UpdateAIParallel does not start as expected; ai_parallel_lpt unavailable");
-        return false;
-    }
     LARGE_INTEGER f;
     QueryPerformanceFrequency(&f);
     const uint64_t t0 = __rdtsc();
@@ -250,9 +245,7 @@ bool Install(uintptr_t base) {
     }
     g_installed = true;
     Log("ai: hooked UpdateAIParallel (ai_parallel_lpt); the per-country updates are hooked per AI class when first seen");
-    if (memcmp((const void*)(base + kRvaDescriptorCtor), kHeadDescriptor, 8) != 0) {
-        Log("ai: CPdxParallelForDescriptor's constructor does not start as expected; ai_nested_inline unavailable");
-    } else {
+    {
         const LPVOID ctor = (LPVOID)(base + kRvaDescriptorCtor);
         if (MH_CreateHook(ctor, (LPVOID)&DescriptorDetour, (LPVOID*)&g_orig_descriptor) != MH_OK || MH_EnableHook(ctor) != MH_OK) {
             Log("ai: could not hook CPdxParallelForDescriptor's constructor; ai_nested_inline unavailable");
