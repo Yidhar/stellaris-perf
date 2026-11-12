@@ -21,9 +21,10 @@ constexpr uintptr_t kRvaMonthlySerial = sdk::fn::CColony_MonthlyUpdateSerial;   
 constexpr uintptr_t kRvaNodeClear = sdk::fn::CModifierNodeBase_Clear;            // CModifierNodeBase::Clear(node)
 constexpr uintptr_t kRvaCachedValues = sdk::fn::CColony_MicroUpdateCachedValues;  // CColony::MicroUpdateCachedValues(this, CModifier*) -> bool changed
 constexpr uintptr_t kRvaInvalidate = sdk::fn::CColony_InvalidateModifier;         // CColony::InvalidateModifier(this)
-constexpr ptrdiff_t kColonyNode = 0x120;            // the colony's modifier node
-constexpr ptrdiff_t kColonyModifier = 0x170;        // the CModifier the cached values are computed from
-constexpr ptrdiff_t kColonyFlags = 0x1088;          // bit 2 set: the node is cleared instead of updated
+constexpr ptrdiff_t kColonyNode = sdk::rt::CColony_modifier_node;  // the colony's modifier node
+constexpr ptrdiff_t kColonyModifier = sdk::rt::CColony_modifier;   // the CModifier the cached values are computed from (the node's)
+constexpr ptrdiff_t kColonyFlags = sdk::rt::CColony_flags;         // with the bit below set, the node is cleared instead of updated
+constexpr int kColonyClearNodeBit = (int)sdk::rt::CColony_flags_clear_node_bit;
 
 
 // The refreshes the engine forces after every change, as the `call` instructions that make them (the SDK's call
@@ -83,7 +84,7 @@ constexpr uintptr_t kJobsColonyUpdateCall = sdk::site::NPlanetJobs_UpdatePopJobs
 constexpr uintptr_t kRvaColonyCalc = sdk::fn::CColony_CalculateModifier;
 constexpr uintptr_t kRvaPlanetCalc = sdk::fn::CPlanet_CalculateModifier;
 constexpr int kMaxJobsPending = 4096;  // nodes per pass; beyond that the engine's refreshes run as they come
-constexpr ptrdiff_t kNodeDirty = 0x108;  // CModifierNodeBase: the byte Update tests and clears
+constexpr ptrdiff_t kNodeDirty = sdk::rt::CModifierNode_dirty;  // CModifierNodeBase: the byte Update tests and clears
 
 using NodeFn = uint64_t (*)(void*);
 using CachedFn = uint64_t (*)(void*, void*);
@@ -289,7 +290,7 @@ uint64_t CachedDetour(void* colony, void* modifier) {
 // the node invalidated again when they changed.
 void Refresh(void* colony) {
     uint8_t* c = (uint8_t*)colony;
-    if ((*(const uint32_t*)(c + kColonyFlags) >> 2) & 1) g_clear(c + kColonyNode);
+    if ((*(const uint32_t*)(c + kColonyFlags) >> kColonyClearNodeBit) & 1) g_clear(c + kColonyNode);
     else g_orig_update(c + kColonyNode);
     if (g_orig_cached(colony, c + kColonyModifier) & 0xFF) g_invalidate(colony);
 }

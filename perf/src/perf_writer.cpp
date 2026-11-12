@@ -1,10 +1,12 @@
 #include "perf_writer.hpp"
+#include "perf_engine.hpp"
 #include "perf_tweaks.hpp"
 #include "stellaris_sdk.hpp"
 #include "MinHook.h"
 
 #include <windows.h>
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -25,53 +27,31 @@ constexpr uintptr_t kRvaWriteString = sdk::fn::CWriter_WriteString;         // C
 constexpr uintptr_t kRvaLexer = sdk::fn::CStaticLexer_Table;                // CStaticLexer's token table (a thread-safe static)
 constexpr uintptr_t kRvaLexerRebuild = sdk::fn::CStaticLexer_RebuildTable;  // rebuilds the table's strings when its counts differ
 
-// Engine layouts (Windows): a CBlob, and the fields of the memory file, the writer, the token table and a CString
-// that the fast paths read.
+// Engine layouts, all from the SDK (tools/sdk_dumper/anchors.py reads each out of the engine code that uses it): a
+// CBlob, the fields of the memory file, the writer and the token table, the file's virtuals, the token ids.
 struct Blob {
     void* vt;
     char* data;
     int32_t capacity;
     int32_t size;
 };
-constexpr size_t kFileBlob = 0x80;      // CBlob* (null for a file over a fixed buffer)
-constexpr size_t kFilePos = 0x94;       // int32 write position
-constexpr size_t kWriterDepth = 0x08;   // int32 list depth (the indentation)
-constexpr size_t kWriterFile = 0x10;    // CFile*
-constexpr size_t kWriterBinary = 0x18;  // bool: a binary writer
-constexpr size_t kLexerEntries = 0x70;  // CString[]: the token strings by id
-constexpr size_t kLexerBuilt = 0x7C;    // int32: the count the strings were built for
-constexpr size_t kLexerWanted = 0x80;   // int32: the current count
-constexpr int kSlotWriteCStr = 6, kSlotWriteData = 9, kSlotGetSize = 16;
-constexpr int kTokenEol = 0x10, kTokenIndent = 0x11, kTokenFixedPoint = 0x167;
+static_assert(offsetof(Blob, data) == sdk::rt::CBlob_data && offsetof(Blob, capacity) == sdk::rt::CBlob_capacity &&
+                  offsetof(Blob, size) == sdk::rt::CBlob_size,
+              "CBlob layout");
+constexpr size_t kFileBlob = (size_t)sdk::rt::CMemoryFile_blob;          // CBlob* (null for a file over a fixed buffer)
+constexpr size_t kFilePos = (size_t)sdk::rt::CMemoryFile_pos;            // int32 write position
+constexpr size_t kWriterDepth = (size_t)sdk::rt::CWriter_depth;          // int32 list depth (the indentation)
+constexpr size_t kWriterFile = (size_t)sdk::rt::CWriter_file;            // CFile*
+constexpr size_t kWriterBinary = (size_t)sdk::rt::CWriter_binary;        // bool: a binary writer
+constexpr size_t kLexerEntries = (size_t)sdk::rt::CStaticLexer_entries;  // CString[]: the token strings by id
+constexpr size_t kLexerBuilt = (size_t)sdk::rt::CStaticLexer_built;      // int32: the count the strings were built for
+constexpr size_t kLexerWanted = (size_t)sdk::rt::CStaticLexer_wanted;    // int32: the current count
+constexpr int kSlotWriteCStr = sdk::vt::CFile_WriteCStr, kSlotWriteData = sdk::vt::CFile_WriteData, kSlotGetSize = sdk::vt::CFile_GetSize;
+constexpr int kTokenEol = (int)sdk::rt::CWriter_token_eol, kTokenIndent = (int)sdk::rt::CWriter_token_indent;
+constexpr int kTokenFixedPoint = (int)sdk::rt::CWriter_token_fixed_point;
 
-// The layout constants as the functions' own code uses them: each byte string (an instruction with the constant in it)
-// must occur in the first `within` bytes of the function.
-struct LayoutCheck {
-    uintptr_t rva;
-    int within;
-    uint8_t bytes[8];
-    int len;
-    const char* name;
-};
-const LayoutCheck kLayoutChecks[] = {
-    { kRvaWriteData, 32, { 0x48, 0x83, 0xB9, (uint8_t)kFileBlob, 0, 0, 0, 0 }, 8, "CMemoryFile::WriteData: cmp qword ptr [rcx + blob], 0" },
-    { kRvaGetSize, 16, { 0x48, 0x8B, 0x81, (uint8_t)kFileBlob, 0, 0, 0 }, 7, "CMemoryFile::GetSize: mov rax, [rcx + blob]" },
-    { kRvaWriteIndent, 48, { 0x80, 0x79, (uint8_t)kWriterBinary, 0 }, 4, "CWriter::WriteIndent: cmp byte ptr [rcx + binary], 0" },
-    { kRvaWriteCStr, 32, { 0xFF, 0x60, (uint8_t)(8 * kSlotWriteData) }, 3, "CFile::Write(const char*): jmp [rax + WriteData slot]" },
-};
-
-// A CString: something at +0, the std::string at +0x10 (the token table's entries are CStrings too).
-struct CString {
-    char head[0x10];
-    union {
-        char* ptr;
-        char sso[16];
-    };
-    size_t size;
-    size_t capacity;
-    const char* Text() const { return capacity >= 16 ? ptr : sso; }
-};
-static_assert(sizeof(CString) == 48, "CString layout");
+// A CString (the token table's entries are CStrings too): perf_engine.hpp
+using CString = EngineString;
 
 using WriteDataFn = void (*)(void*, const void*, int);
 using WriteTokenFn = void (*)(void*, int);
@@ -180,7 +160,7 @@ void WriteTokenDetour(void* w, int id) {
         void* file = File(w);
         if (PlainFile(file)) {
             const CString* t = Token(id);
-            FileWrite(file, t->Text(), (int)t->size);
+            FileWrite(file, t->text.data(), (int)t->text.size());
             C().tokens++;
             return;
         }
@@ -202,8 +182,8 @@ void WriteIndentDetour(void* w) {
             const int depth = Depth(w);
             if (depth <= 0) return;
             const CString* t = Token(kTokenIndent);
-            const char* s = t->Text();
-            const int len = (int)t->size;
+            const char* s = t->text.data();
+            const int len = (int)t->text.size();
             if (len == 1 && depth <= kRun && s[0] != 0) {
                 char have = g_run_char.load(std::memory_order_acquire);
                 if (have == 0) {
@@ -234,8 +214,8 @@ void WriteCStringDetour(void* w, const CString* s) {
     if (g_on.load(std::memory_order_relaxed) && !Binary(w)) {
         void* file = File(w);
         if (PlainFile(file)) {
-            const char* p = s->Text();
-            FileWrite(file, p, (int)strnlen(p, s->size));
+            const char* p = s->text.data();
+            FileWrite(file, p, (int)strnlen(p, s->text.size()));
             C().labels++;
             return;
         }
@@ -283,23 +263,9 @@ void WriteStringDetour(void* w, const char* s, bool no_eol, bool unquoted) {
     g_orig_write_string(w, s, no_eol, unquoted);
 }
 
-bool CheckLayout(uintptr_t base) {
-    for (const LayoutCheck& c : kLayoutChecks) {
-        const uint8_t* p = (const uint8_t*)(base + c.rva);
-        bool found = false;
-        for (int i = 0; i + c.len <= c.within && !found; ++i) found = memcmp(p + i, c.bytes, (size_t)c.len) == 0;
-        if (!found) {
-            Log("writer: %s not found at RVA 0x%llX; save_fast_writer unavailable", c.name, (unsigned long long)c.rva);
-            return false;
-        }
-    }
-    return true;
-}
-
 }  // namespace
 
 bool Install(uintptr_t base) {
-    if (!CheckLayout(base)) return false;
     g_lexer = (LexerFn)(base + kRvaLexer);
     g_rebuild = (RebuildFn)(base + kRvaLexerRebuild);
     g_write_cstr = (void*)(base + kRvaWriteCStr);

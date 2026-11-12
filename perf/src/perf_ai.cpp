@@ -18,15 +18,15 @@ namespace {
 // From the SDK (tools/sdk_dumper/functions.py in the Stellaris MCP repository)
 constexpr uintptr_t kRvaUpdateAIParallel = sdk::fn::UpdateAIParallel;  // UpdateAIParallel(CCountryAI* const* countries, int n)
 // CPdxParallelForDescriptor::CPdxParallelForDescriptor(this, begin, end, job type, max tasks, pair<scheduler,
-// priority>*): writes the task count (threads of the priority + 1; the max-task argument is not used on Windows) to
-// +0x14 and the chunk size to +0x18. CPdxTaskScheduler::CreateTasks takes its serial path when CalcNumTasks() == 1,
-// i.e. when that count is 1.
+// priority>*): writes the task count (threads of the priority + 1; the max-task argument is not used on Windows) and
+// the chunk size after it. CPdxTaskScheduler::CreateTasks takes its serial path when CalcNumTasks() == 1, i.e. when
+// that count is 1.
 constexpr uintptr_t kRvaDescriptorCtor = sdk::fn::CPdxParallelForDescriptor_Ctor;
-constexpr ptrdiff_t kDescriptorTasks = 0x14;
-// The per-country entry the parallel-for calls on every element: CCountryAI vtable slot 7, which
-// checks that the country has an AI and is alive and then tail-calls the base update (which runs the AI proper
-// through slot 8 and more). Hooked per AI class, found through the objects' vtables.
-constexpr int kUpdateSlot = 7;
+constexpr ptrdiff_t kDescriptorTasks = sdk::rt::CPdxParallelForDescriptor_tasks;
+// The per-country entry the parallel-for calls on every element: a CCountryAI virtual that checks that the country
+// has an AI and is alive and then tail-calls the base update (which runs the AI proper through the next slot and
+// more). Hooked per AI class, found through the objects' vtables.
+constexpr int kUpdateSlot = sdk::vt::CCountryAI_Update;
 constexpr int kMaxCountries = 1024;
 constexpr int kMaxTargets = 8;
 

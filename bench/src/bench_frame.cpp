@@ -96,10 +96,8 @@ void* Idler() { return ReadPtr(g_base + sdk::glob::g_CurrentInGameIdler); }
 void* GameState() { return ReadPtr(g_base + sdk::glob::g_CurrentGameState); }
 
 // The engine applies a save's random_seed / random_count only while its console variable UseSavedRandom is set;
-// otherwise a loaded game is reseeded from the clock and two runs of the same save diverge within days. The variable's
-// address is read out of the thunk that registers it (lea r8, ""; lea rdx, [the bool]; lea rcx, "UseSavedRandom";
-// jmp), which must look exactly like that.
-constexpr uintptr_t kRvaRegisterUseSavedRandom = 0x4F10;
+// otherwise a loaded game is reseeded from the clock and two runs of the same save diverge within days. The variable is
+// the SDK's sdk::glob::UseSavedRandom (the bool its console registration names).
 uint8_t* g_use_saved_random = nullptr;
 
 std::string Status() {
@@ -178,17 +176,6 @@ bool CallSaveGame(void* idler, const char* name, int* status) {
 }
 
 std::string Error(const char* what) { return std::string("{\"ok\":false,\"error\":\"") + what + "\"}"; }
-
-uint8_t* FindUseSavedRandom(uintptr_t base) {
-    const uint8_t* p = (const uint8_t*)(base + kRvaRegisterUseSavedRandom);
-    if (!(p[0] == 0x4C && p[1] == 0x8D && p[2] == 0x05 && p[7] == 0x48 && p[8] == 0x8D && p[9] == 0x15 && p[14] == 0x48 &&
-          p[15] == 0x8D && p[16] == 0x0D && p[21] == 0xE9)) {
-        return nullptr;
-    }
-    const char* name = (const char*)(p + 21 + *(const int32_t*)(p + 17));
-    if (strcmp(name, "UseSavedRandom") != 0) return nullptr;
-    return (uint8_t*)(p + 14 + *(const int32_t*)(p + 10));
-}
 
 std::string Run(const std::string& line) {
     char cmd[32] = {};
@@ -327,13 +314,9 @@ bool Install(uintptr_t base) {
     }
     g_present_slot = slot;
     Log("patched IDXGISwapChain::Present slot %p (was %p)", (void*)slot, (void*)g_orig_present);
-    g_use_saved_random = FindUseSavedRandom(base);
-    if (g_use_saved_random) {
-        *g_use_saved_random = 1;
-        Log("UseSavedRandom set: a save loaded from now on keeps its random seed, so runs of it repeat exactly");
-    } else {
-        Log("the UseSavedRandom console variable was not found; runs of the same save will diverge");
-    }
+    g_use_saved_random = (uint8_t*)(base + sdk::glob::UseSavedRandom);
+    *g_use_saved_random = 1;
+    Log("UseSavedRandom set: a save loaded from now on keeps its random seed, so runs of it repeat exactly");
     return true;
 }
 

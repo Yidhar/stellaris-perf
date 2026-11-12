@@ -49,8 +49,8 @@ double g_qpc_us = 0;
 // check over the whole monthly update (mode 2's window).
 constexpr uintptr_t kRvaUpdateSupportAndApproval = sdk::fn::CPopFaction_UpdateSupportAndApproval;
 constexpr uintptr_t kRvaColonyMonthlyUpdate = sdk::fn::NColonyUpdate_MonthlyUpdate;  // the caller of the two passes
-constexpr size_t kFactionSupport = 0x40;  // 16 bytes of support, then the approval at +0x50 (8 bytes)
-constexpr size_t kFactionValues = 0x18;
+constexpr size_t kFactionSupport = (size_t)sdk::rt::CPopFaction_support;  // the support (16 bytes), then the approval (8 bytes)
+constexpr size_t kFactionValues = (size_t)sdk::rt::CPopFaction_approval + sizeof(int64_t) - kFactionSupport;
 using FactionFn = void (*)(void*);
 FactionFn g_orig_faction = nullptr;
 Fn g_orig_colony_monthly = nullptr;

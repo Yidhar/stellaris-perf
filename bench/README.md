@@ -15,7 +15,7 @@ Automated performance measurement for `stellaris_perf.dll`. Nothing here is need
 | `scripts/game_session.py` | Automatic save loading: restarts the game on a chosen save, loads the DLLs, pauses, opens the fleet manager. |
 | `scripts/save_compare.py` | Checks that an ini key leaves a save file's bytes unchanged: from one paused game, saves with the key off and on (the bench DLL's `save` command) and compares the archives' entries byte for byte. |
 | `scripts/stellaris_paths.py` | Finds the game folder (Steam libraries) and the Documents folder; used by the other scripts. |
-| `scripts/rule_report.py` | Names the rules in `stellaris_perf_rules.csv` (`rule_profile=1`) from live game memory. |
+| `scripts/rule_report.py` | Prints `stellaris_perf_rules.csv` (`rule_profile=1`): the time per game rule and cache path, by the rule names the plugin writes. |
 | `stress_mod/gen_stress_mod.py` | Generates the stress-test mod (below). |
 | `tools/` | WPR profile and report script for hardware-counter (cache miss) sampling. |
 | `results/` | One JSON per benchmark run (created on first run, not tracked). |

@@ -1,4 +1,5 @@
 #include "perf_tweaks.hpp"
+#include "perf_engine.hpp"
 #include "perf_shared.hpp"
 #include "perf_phase.hpp"
 #include "perf_alloc.hpp"
@@ -297,13 +298,13 @@ uint64_t HashKey(const RuleKey& k) {
     return h ^ (h >> 33);  // the multiply leaves the low bits weak; they pick the set and way
 }
 
-// CEventScope (Windows; same offsets as the Linux build for these members):
-//   +0x08 u64 scope type, +0x10 u32 object id, +0x1C local object pointer,
-//   +0x30 from, +0x38 root, +0x40 prev (each points at the scope itself when unset),
-//   +0x70 CPdxHybridArray<CEventScopeParameter,4> with its size at +0x84.
-constexpr size_t kScopeType = 0x08, kScopeId = 0x10, kScopeLocal = 0x1C;
-constexpr size_t kScopeRoot = 0x30, kScopeFrom = (size_t)sdk::rt::CEventScope_from, kScopePrev = 0x40, kScopeParamCount = 0x84;
-static_assert(kScopeFrom == 0x38, "CEventScope::from moved: re-check the other scope offsets too");
+// CEventScope, from the SDK (CEventScope::Copy's own reads): the scope type (u64), the object id (u32), the local
+// object pointer; root, from and prev (each points at the scope itself when unset); the size of the
+// CPdxHybridArray<CEventScopeParameter,4>.
+constexpr size_t kScopeType = (size_t)sdk::rt::CEventScope_type, kScopeId = (size_t)sdk::rt::CEventScope_id;
+constexpr size_t kScopeLocal = (size_t)sdk::rt::CEventScope_local, kScopeRoot = (size_t)sdk::rt::CEventScope_root;
+constexpr size_t kScopeFrom = (size_t)sdk::rt::CEventScope_from, kScopePrev = (size_t)sdk::rt::CEventScope_prev;
+constexpr size_t kScopeParamCount = (size_t)sdk::rt::CEventScope_param_count;
 
 void ReadSlot(const unsigned char* s, ScopeId* out) {
     out->type = *(const uint64_t*)(s + kScopeType);
@@ -588,7 +589,7 @@ bool RuleEvaluateCore(const void* rule, void* scope, void* reason, uint8_t show_
 int RuleIndex(const void* rule) {
     int index = 0;
     __try {
-        index = *(const int32_t*)rule;
+        index = *(const int32_t*)((const char*)rule + sdk::rt::CScriptedRule_index);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         index = 0;
     }
@@ -693,7 +694,7 @@ bool RuleEvaluateDetour(const void* rule, void* scope, void* reason, uint8_t sho
     const uint64_t dt = __rdtsc() - t0;
     int index = 0;
     __try {
-        index = *(const int32_t*)rule;
+        index = *(const int32_t*)((const char*)rule + sdk::rt::CScriptedRule_index);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         index = 0;
     }
@@ -706,6 +707,24 @@ bool RuleEvaluateDetour(const void* rule, void* scope, void* reason, uint8_t sho
     return value;
 }
 
+// A rule's name, the way CScriptedRule::Evaluate builds "CGameRules::<name>.Evaluate": the rule's index picks a token
+// (sdk::glob::CScriptedRule_TokenByIndex), whose text is the token table's entry.
+bool RuleName(int index, char* out, size_t cap) {
+    __try {
+        const int32_t token = *(const int32_t*)(g_base + sdk::glob::CScriptedRule_TokenByIndex + (size_t)index * sizeof(int32_t));
+        const unsigned char* lexer = (const unsigned char*)(g_base + sdk::glob::CStaticLexer_Instance);
+        const EngineString* entries = *(const EngineString* const*)(lexer + sdk::rt::CStaticLexer_entries);
+        if (!entries || token < 0 || token >= *(const int32_t*)(lexer + sdk::rt::CStaticLexer_built)) return false;
+        const size_t n = entries[token].text.size();
+        if (n == 0 || n >= cap) return false;
+        memcpy(out, entries[token].text.data(), n);
+        out[n] = 0;
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
 void DumpRuleProfile() {
     std::wstring dir;
     {
@@ -716,15 +735,17 @@ void DumpRuleProfile() {
     CreateDirectoryW(dir.c_str(), nullptr);
     FILE* f = _wfopen((dir + L"\\stellaris_perf_rules.csv").c_str(), L"w");
     if (!f) return;
-    fprintf(f, "rule_index,path,calls,timed_calls,cycles,ns_per_timed_call,cache_enabled\n");
+    fprintf(f, "rule_index,path,calls,timed_calls,cycles,ns_per_timed_call,cache_enabled,rule\n");
     static const char* names[kRulePaths] = { "orig", "bypass", "hit", "miss" };
     for (int p = 0; p < kRulePaths; ++p) {
         for (int i = 0; i < kRuleIndexSlots; ++i) {
             const uint64_t n = g_rule_prof_calls[p][i].load(), t = g_rule_prof_tcalls[p][i].load(),
                            c = g_rule_prof_cycles[p][i].load();
-            if (n) fprintf(f, "%d,%s,%llu,%llu,%llu,%.1f,%d\n", i, names[p], (unsigned long long)n,
-                           (unsigned long long)t, (unsigned long long)c, t ? c * g_ms_per_cycle * 1e6 / t : 0.0,
-                           (int)g_rule_enabled[i].load());
+            if (!n) continue;
+            char rule[96] = "";  // the last slot collects every index beyond the table: no name
+            if (i < kRuleIndexSlots - 1 && !RuleName(i, rule, sizeof rule)) rule[0] = 0;
+            fprintf(f, "%d,%s,%llu,%llu,%llu,%.1f,%d,%s\n", i, names[p], (unsigned long long)n, (unsigned long long)t,
+                    (unsigned long long)c, t ? c * g_ms_per_cycle * 1e6 / t : 0.0, (int)g_rule_enabled[i].load(), rule);
         }
     }
     fclose(f);
@@ -932,7 +953,8 @@ void UpdateFlagsDetour(void* flags) {
 // g_winv_end as the base only if no insert was in flight (begin == end) when it started.
 constexpr int kInvCap = 256;
 constexpr uint64_t kNoBase = ~0ull;
-constexpr ptrdiff_t kSlotStride = 0x18;  // `lea rdx, [rax + rax*2]` ... `[rcx + rdx*8]` (anchors.py)
+constexpr ptrdiff_t kSlotStride = sdk::rt::CModifierNodeManager_slot_size;
+constexpr uint32_t kIndexMask = (uint32_t)sdk::rt::CModifierNodeManager_index_mask;  // a node id's slot index
 std::atomic<int> g_flush_mode{ 0 };      // 0 = off, 1 = fast path, 2 = verify (engine rebuilds too, compared)
 std::atomic<int> g_flush_max{ 32 };
 uint32_t g_inv_ids[kInvCap];              // main thread only
@@ -969,10 +991,13 @@ void AddInvalidDetour(void* mgr, uint32_t node_id, uint32_t category) {
 // calc may read nodes of the categories it depends on); the serial path follows the same order.
 // Each node points at its node type (+0): the category id at +8 and the categories it depends on
 // as an int range [+0x10, +0x18). Read from live nodes once per manager and checked (sane ranges,
-// ids < 64, no cycle); if the check fails the fast path stays off. (Offsets verified against live
-// memory in 4.5.1 and 4.5.2, not anchored in code: the check is the guard.)
+// ids < 64, no cycle); if the check fails the fast path stays off. The category id's offset is the SDK's. The
+// dependency list is the std::vector<int> that follows it (its begin and end pointers): the engine only walks it in
+// code the SDK has no anchor for, so these two follow from the category's offset and the check is their guard.
 constexpr int kMaxCat = 64;
-constexpr ptrdiff_t kTypeCategory = 0x8, kTypeDepsBegin = 0x10, kTypeDepsEnd = 0x18;
+constexpr ptrdiff_t kTypeCategory = sdk::rt::CModifierNodeType_category;
+constexpr ptrdiff_t kTypeDepsBegin = (kTypeCategory + (ptrdiff_t)sizeof(int32_t) + (ptrdiff_t)alignof(void*) - 1) & ~((ptrdiff_t)alignof(void*) - 1);
+constexpr ptrdiff_t kTypeDepsEnd = kTypeDepsBegin + (ptrdiff_t)sizeof(void*);
 int8_t g_cat_rank[kMaxCat];
 const void* g_rank_mgr = nullptr;
 bool g_rank_ok = false;
@@ -1049,7 +1074,7 @@ bool BuildCategoryRanks(const unsigned char* mgr) {
 }
 
 void* NodeOf(const unsigned char* mgr, uint32_t id) {
-    const uint32_t index = id & 0xFFFFF;
+    const uint32_t index = id & kIndexMask;
     if (index >= *(const uint32_t*)(mgr + sdk::rt::CModifierNodeManager_slot_count)) return nullptr;
     const unsigned char* slot = *(unsigned char* const*)(mgr + sdk::rt::CModifierNodeManager_slots) + index * kSlotStride;
     if (*(const uint32_t*)slot != id) return nullptr;
@@ -1065,14 +1090,15 @@ uint64_t NodeHash(const unsigned char* node) {
     const int n = *(const int32_t*)(m + sdk::rt::CModifier_entry_count);
     const unsigned char* e = *(unsigned char* const*)(m + sdk::rt::CModifier_entries);
     mix((uint64_t)n);
-    for (int i = 0; i < n; ++i) mix(*(const uint64_t*)(e + i * 16)), mix(*(const uint32_t*)(e + i * 16 + 8));
+    for (int i = 0; i < n; ++i)
+        mix(*(const uint64_t*)(e + i * sdk::rt::CModifier_entry_size)), mix(*(const uint32_t*)(e + i * sdk::rt::CModifier_entry_size + sdk::rt::CModifierEntry_type));
     const int pn = *(const int32_t*)(m + sdk::rt::CModifier_parent_count);
     const unsigned char* pr = *(unsigned char* const*)(m + sdk::rt::CModifier_parents);
     mix((uint64_t)pn);
     for (int i = 0; i < pn; ++i) {
-        mix(*(const uint64_t*)(pr + i * 0x20 + 8));
-        mix(*(const uint64_t*)(pr + i * 0x20 + 0x10));
-        mix(*(const uint32_t*)(pr + i * 0x20 + 0x18));
+        mix(*(const uint64_t*)(pr + i * sdk::rt::CModifier_parent_size + sdk::rt::CModifierParent_multiplier));
+        mix(*(const uint64_t*)(pr + i * sdk::rt::CModifier_parent_size + sdk::rt::CModifierParent_name));
+        mix(*(const uint32_t*)(pr + i * sdk::rt::CModifier_parent_size + sdk::rt::CModifierParent_category));
     }
     return h;
 }

@@ -16,7 +16,7 @@
 | `scripts/game_session.py` | 自动读档：用指定存档重启游戏，加载 DLL，暂停，打开舰队管理器。 |
 | `scripts/save_compare.py` | 检查某个 ini 键不改变存档的字节：在同一个暂停的游戏里分别以该键关、开各存一次（bench DLL 的 `save` 命令），逐字节比较存档里的每个条目。 |
 | `scripts/stellaris_paths.py` | 找到游戏目录（Steam 库）和 Documents 目录，其他脚本都用它。 |
-| `scripts/rule_report.py` | 从游戏内存里为 `logs\stellaris_perf_rules.csv`（`rule_profile=1`）里的规则命名。 |
+| `scripts/rule_report.py` | 打印 `logs\stellaris_perf_rules.csv`（`rule_profile=1`）：按规则名（由插件写入）列出每条游戏规则在各缓存路径上的耗时。 |
 | `stress_mod/gen_stress_mod.py` | 生成压力测试 mod（见下）。 |
 | `tools/` | 硬件计数器（缓存未命中）采样用的 WPR 配置和报告脚本。 |
 | `results/` | 每次运行的 JSON 结果（首次运行时创建，不入库）。 |

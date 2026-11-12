@@ -1,4 +1,5 @@
 #include "perf_nodes.hpp"
+#include "perf_engine.hpp"
 #include "perf_shared.hpp"
 #include "perf_tweaks.hpp"
 #include "MinHook.h"
@@ -22,12 +23,19 @@ namespace {
 constexpr uintptr_t kRvaInvalidateChildren = sdk::fn::CModifierNodeBase_InvalidateChildren;  // CModifierNodeBase::InvalidateChildren(node, mask)
 constexpr uintptr_t kRvaModifierClear = sdk::fn::CModifier_ClearEntries;  // the node modifier's virtual Clear (vtable slot 16): the first step of every rebuild
 constexpr uintptr_t kCascadeSite = sdk::site::CModifierNodeBase_Invalidate_AddInvalid + 5;  // the return address of AddInvalid inside the per-child Invalidate
-constexpr ptrdiff_t kNodeId = 0x8;          // -1 = not registered
-constexpr ptrdiff_t kNodeCalc = 0x48;       // the std::function impl (its vtable slot 2 = _Do_call(impl, node) runs the owner's calc)
-constexpr ptrdiff_t kNodeDirty = 0x108;
-constexpr ptrdiff_t kTypeCategory = 0x8;    // of the node type the node points at (+0)
-constexpr ptrdiff_t kPlanetColony = 0xE0;   // CPlanet: the colony ref (0xFFFFFFFF = none)
-constexpr ptrdiff_t kSlotStride = 0x18;
+// Layouts, all from the SDK (tools/sdk_dumper/anchors.py reads each out of the engine code that uses it)
+constexpr ptrdiff_t kNodeId = sdk::rt::CModifierNode_id;        // -1 = not registered
+constexpr ptrdiff_t kNodeCalc = sdk::rt::CModifierNode_calc;    // the std::function impl whose _Do_call(impl, node) runs the owner's calc
+constexpr int kCalcCallSlot = sdk::vt::CModifierNodeCalc_Call;  // _Do_call in the impl's vtable
+constexpr ptrdiff_t kNodeDirty = sdk::rt::CModifierNode_dirty;
+constexpr ptrdiff_t kTypeCategory = sdk::rt::CModifierNodeType_category;  // of the node type the node points at (its first member)
+constexpr ptrdiff_t kPlanetColony = sdk::ent::CPlanet::colony;  // the colony ref (0xFFFFFFFF = none)
+constexpr ptrdiff_t kSlotStride = sdk::rt::CModifierNodeManager_slot_size;
+constexpr uint32_t kIndexMask = (uint32_t)sdk::rt::CModifierNodeManager_index_mask;  // a node id's slot index
+// a node's content: the modifier's entries (value, then type) and parent records (clone, multiplier, name, category)
+constexpr ptrdiff_t kEntrySize = sdk::rt::CModifier_entry_size, kEntryType = sdk::rt::CModifierEntry_type;
+constexpr ptrdiff_t kParentSize = sdk::rt::CModifier_parent_size, kParentMult = sdk::rt::CModifierParent_multiplier;
+constexpr ptrdiff_t kParentName = sdk::rt::CModifierParent_name, kParentCat = sdk::rt::CModifierParent_category;
 constexpr int kMaxCat = 64;
 constexpr int kInvSlots = 4096;
 constexpr int kNodeSlots = 1 << 17;  // node states (kept across windows: the parents' last rebuilds are consulted)
@@ -103,18 +111,18 @@ bool CopyEntries(const void* node, PreCopy* out) {
         if (n < 0 || n > kPreEntries) return false;
         const unsigned char* e = *(unsigned char* const*)(m + sdk::rt::CModifier_entries);
         for (int i = 0; i < n; ++i) {
-            out->val[i] = *(const uint64_t*)(e + i * 16);
-            out->type[i] = *(const uint32_t*)(e + i * 16 + 8);
+            out->val[i] = *(const uint64_t*)(e + i * kEntrySize);
+            out->type[i] = *(const uint32_t*)(e + i * kEntrySize + kEntryType);
         }
         out->n = (uint32_t)n;
         const int pn = *(const int32_t*)(m + sdk::rt::CModifier_parent_count);
         out->parents = (uint32_t)pn;
         const unsigned char* pr = *(unsigned char* const*)(m + sdk::rt::CModifier_parents);
         for (int i = 0; i < pn && i < kPreParents; ++i) {
-            out->pclone[i] = *(const uint64_t*)(pr + i * 0x20);
-            out->pmult[i] = *(const uint64_t*)(pr + i * 0x20 + 8);
-            out->pname[i] = *(const uint64_t*)(pr + i * 0x20 + 0x10);
-            out->pcat[i] = *(const uint32_t*)(pr + i * 0x20 + 0x18);
+            out->pclone[i] = *(const uint64_t*)(pr + i * kParentSize);
+            out->pmult[i] = *(const uint64_t*)(pr + i * kParentSize + kParentMult);
+            out->pname[i] = *(const uint64_t*)(pr + i * kParentSize + kParentName);
+            out->pcat[i] = *(const uint32_t*)(pr + i * kParentSize + kParentCat);
             memset(out->pstr[i], 0, sizeof out->pstr[i]);
         }
         return true;
@@ -134,31 +142,32 @@ void ReadNameBytes(PreCopy* c) {
     }
 }
 
-uint32_t OwnerId(const void* node) {
+uint32_t NodeIdOf(const void* node) {
     __try {
-        return *(const uint32_t*)((const unsigned char*)node + 0xC);
+        return *(const uint32_t*)((const unsigned char*)node + kNodeId);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return 0xFFFFFFFFu;
     }
 }
 
-// A modifier type's key, from the engine's definitions table (CModifier::_Definitions: the array pointer, its count at
-// +0xC; 0xB0-byte entries with the key as a Clausewitz string at +0x10: 16 inline bytes or a heap pointer, then size and
-// capacity). The table is the SDK's sdk::glob::CModifier_Definitions.
+// A modifier type's key, the way the engine prints it (CModifier::LogDefinitions): the definition's token, whose text
+// is the token table's entry. The definitions array (sdk::glob::CModifier_Definitions) keeps its count next to its
+// data pointer; the token table is a static object (sdk::glob::CStaticLexer_Instance). All offsets are the SDK's.
 constexpr uintptr_t kRvaModifierDefinitions = sdk::glob::CModifier_Definitions;
 bool g_defs_ok = false;
 
 bool ReadTypeName(uint32_t type, char* out, size_t cap_out) {
     __try {
         const unsigned char* arr = *(unsigned char* const*)(g_base + kRvaModifierDefinitions);
-        const uint32_t count = *(const uint32_t*)(g_base + kRvaModifierDefinitions + 0xC);
+        const uint32_t count = *(const uint32_t*)(g_base + kRvaModifierDefinitions + sdk::rt::CModifierDefinitions_count);
         if (!arr || type >= count) return false;
-        const unsigned char* s = arr + (size_t)type * 0xB0 + 0x10;
-        const uint64_t size = *(const uint64_t*)(s + 16), cap = *(const uint64_t*)(s + 24);
+        const int32_t token = *(const int32_t*)(arr + (size_t)type * sdk::rt::CModifierDefinition_size + sdk::rt::CModifierDefinition_token);
+        const unsigned char* lexer = (const unsigned char*)(g_base + sdk::glob::CStaticLexer_Instance);
+        const EngineString* entries = *(const EngineString* const*)(lexer + sdk::rt::CStaticLexer_entries);
+        if (!entries || token < 0 || token >= *(const int32_t*)(lexer + sdk::rt::CStaticLexer_built)) return false;
+        const size_t size = entries[token].text.size();
         if (size == 0 || size >= cap_out) return false;
-        const char* p = cap < 16 ? (const char*)s : *(const char* const*)s;
-        if (!p) return false;
-        memcpy(out, p, size);
+        memcpy(out, entries[token].text.data(), size);
         out[size] = 0;
         return true;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
@@ -177,7 +186,7 @@ void LogDiff(int cat, const void* node, const PreCopy& pre) {
     PreCopy now;
     if (!CopyEntries(node, &now)) return;
     char buf[400];
-    int len = snprintf(buf, sizeof buf, "node_trace: diff cat=%d owner=%u entries %u->%u parents %u->%u:", cat, OwnerId(node), pre.n, now.n, pre.parents, now.parents);
+    int len = snprintf(buf, sizeof buf, "node_trace: diff cat=%d node=0x%X entries %u->%u parents %u->%u:", cat, NodeIdOf(node), pre.n, now.n, pre.parents, now.parents);
     int shown = 0;
     for (uint32_t i = 0; i < pre.n && shown < 6 && len < (int)sizeof buf - 60; ++i) {
         uint32_t j = 0;
@@ -244,13 +253,14 @@ struct DoCall {
 DoCall g_docall[kMaxDoCall];
 std::atomic<int> g_docall_n{ 0 };
 std::atomic<uint64_t> g_docall_overflow{ 0 };
-// per category: the owner's calc the delegate jumps to (the member function pointer the std::function holds at
-// +0x10, after the owner at +8 and a this-adjustment at +0x18), to name the category
+// per category: the owner's calc the delegate jumps to, to name the category. The std::function's impl holds, after
+// its vtable pointer, the bound callable: the owner, then the member function pointer (MSVC's layout of a callable,
+// not an engine structure)
 std::atomic<uintptr_t> g_cat_calc[kMaxCat];
 
 uintptr_t CalcOf(const void* impl) {
     __try {
-        return *(const uintptr_t*)((const unsigned char*)impl + 0x10);
+        return *(const uintptr_t*)((const unsigned char*)impl + 2 * sizeof(void*));
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return 0;
     }
@@ -365,7 +375,7 @@ uintptr_t DoCallOf(const void* node) {
         const unsigned char* impl = *(unsigned char* const*)((const unsigned char*)node + kNodeCalc);
         if (!impl) return 0;
         const uintptr_t* vt = *(const uintptr_t* const*)impl;
-        return vt[2];
+        return vt[kCalcCallSlot];
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return 0;
     }
@@ -374,7 +384,7 @@ uintptr_t DoCallOf(const void* node) {
 void* NodeOf(const void* mgr, uint32_t id) {
     __try {
         const unsigned char* m = (const unsigned char*)mgr;
-        const uint32_t index = id & 0xFFFFF;
+        const uint32_t index = id & kIndexMask;
         if (index >= *(const uint32_t*)(m + sdk::rt::CModifierNodeManager_slot_count)) return nullptr;
         const unsigned char* slot = *(unsigned char* const*)(m + sdk::rt::CModifierNodeManager_slots) + index * kSlotStride;
         if (*(const uint32_t*)slot != id) return nullptr;
@@ -397,9 +407,9 @@ inline uint64_t Mix64(uint64_t v) {
 }
 
 // A parent record's source name is a CPdxModifierName object made anew at every rebuild (CPdxModifierNameRefCountedLocKeyImpl
-// and the shared CPdxModifierName::_EmptyName): its content through the object's own CalcHash (vtable slot 5, the
-// empty name's returns 0)
-constexpr int kNameCalcHashSlot = 5;
+// and the shared CPdxModifierName::_EmptyName): its content through the object's own CalcHash (a virtual of the name;
+// the empty name's returns 0)
+constexpr int kNameCalcHashSlot = sdk::vt::CPdxModifierName_CalcHash;
 uint64_t NameHash(void* name) {
     if (!name) return 0;
     __try {
@@ -419,14 +429,14 @@ uint64_t NodeHash(const void* node) {
         const unsigned char* e = *(unsigned char* const*)(m + sdk::rt::CModifier_entries);
         uint64_t h = Mix64((uint64_t)n * 0x9E3779B97F4A7C15ull);
         for (int i = 0; i < n; ++i)
-            h += Mix64(*(const uint64_t*)(e + i * 16) * 0x9E3779B97F4A7C15ull + *(const uint32_t*)(e + i * 16 + 8));
+            h += Mix64(*(const uint64_t*)(e + i * kEntrySize) * 0x9E3779B97F4A7C15ull + *(const uint32_t*)(e + i * kEntrySize + kEntryType));
         const int pn = *(const int32_t*)(m + sdk::rt::CModifier_parent_count);
         const unsigned char* pr = *(unsigned char* const*)(m + sdk::rt::CModifier_parents);
         h += Mix64((uint64_t)pn * 0xC2B2AE3D27D4EB4Full);
         for (int i = 0; i < pn; ++i) {
-            uint64_t r = Mix64(*(const uint64_t*)(pr + i * 0x20 + 8) + 0x1234567ull);
-            r = Mix64(r ^ NameHash(*(void* const*)(pr + i * 0x20 + 0x10)));
-            r = Mix64(r ^ *(const uint32_t*)(pr + i * 0x20 + 0x18));
+            uint64_t r = Mix64(*(const uint64_t*)(pr + i * kParentSize + kParentMult) + 0x1234567ull);
+            r = Mix64(r ^ NameHash(*(void* const*)(pr + i * kParentSize + kParentName)));
+            r = Mix64(r ^ *(const uint32_t*)(pr + i * kParentSize + kParentCat));
             h += r;
         }
         return h;

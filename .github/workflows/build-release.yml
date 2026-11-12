@@ -59,7 +59,7 @@ jobs:
           $ts = (Select-String -Path sdk/stellaris_sdk.hpp -Pattern "kExeTimestamp = (0x[0-9A-Fa-f]+)").Matches[0].Groups[1].Value
           $built = [DateTimeOffset]::FromUnixTimeSeconds([Convert]::ToInt64($ts, 16)).UtcDateTime.ToString("yyyy-MM-dd HH:mm 'UTC'")
           # the game version that exe build belongs to (the SDK and the manifest carry only the build): update it with the SDK
-          $game = "4.5.3"
+          $game = "4.5.4"
 
           # --- stellaris-perf: the plugin. The zip IS the plugin folder: unpack it into
           #     Documents\Paradox Interactive\Stellaris\plugins\stellaris-perf\, or install the unpacked folder with the launcher.
