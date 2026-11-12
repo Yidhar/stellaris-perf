@@ -46,6 +46,9 @@ jobs:
         run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64
       - name: Build stellaris_perf.dll and stellaris_bench.dll
         run: cmake --build build --config Release --parallel
+      # the tooltip cache's call-site hooks and logic against a stand-in for the engine's code (no game needed)
+      - name: Offline test
+        run: build\Release\tooltip_test.exe
 
       # ---- packages
       - name: Package

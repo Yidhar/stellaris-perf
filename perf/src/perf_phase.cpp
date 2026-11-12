@@ -152,10 +152,21 @@ void FinishDay(uint64_t t_end) {
 using Fn = uint64_t (*)(void*, void*, void*, void*, uint64_t, uint64_t, uint64_t, uint64_t);
 Fn g_orig[kAll];
 
+// The GUI context (perf_phase.hpp): the two per-frame GUI updates count the calling thread's depth.
+thread_local int t_gui_depth = 0;
+template <bool Gui>
+struct GuiScope {};
+template <>
+struct GuiScope<true> {
+    GuiScope() { ++t_gui_depth; }
+    ~GuiScope() { --t_gui_depth; }
+};
+
 // Forwards four register and four stack arguments, enough for every function here; no floating point is touched, so
 // xmm arguments and results pass through untouched.
 template <int P>
 uint64_t Detour(void* a, void* b, void* c, void* d, uint64_t e, uint64_t f, uint64_t g, uint64_t h) {
+    const GuiScope<(P == kGui || P == kGui2)> gui_scope;
     SharedStats* shared = nullptr;
     if constexpr (P == kSave) {  // the save's window, for a sampling profiler outside the game (perf_shared.hpp)
         if ((shared = Shared()) != nullptr) {
@@ -222,6 +233,20 @@ const Target kTargets[] = {
 };
 
 const char* NameOf(int p) { return p < kCount ? kNames[p] : g_extra[p - kCount].name; }
+
+}  // namespace
+
+int GuiDepth() { return t_gui_depth; }
+GuiContext::GuiContext() { ++t_gui_depth; }
+GuiContext::~GuiContext() { --t_gui_depth; }
+int SuspendGui() {
+    const int depth = t_gui_depth;
+    t_gui_depth = 0;
+    return depth;
+}
+void ResumeGui(int depth) { t_gui_depth = depth; }
+
+namespace {
 
 // True when rva is the start of a function of the exe: an entry of the exception directory whose unwind info is not a
 // chained one (a chunk of another function). Hooking anything else would corrupt the code, so phase_extra is checked.

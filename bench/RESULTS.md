@@ -67,6 +67,58 @@ Tried and rejected: dropping the draw step (RVA 0x334160) of each loop iteration
 (231 to about 280 ms per day): the engine then ran the GUI update (RVA 0x9293a0, 0x1c0a7a0, 0x1A4D610) and `RenderFrame`
 more than twice as often (their samples went from 6.3 / 3.4 / 2.7 % to 15.5 / 8.7 / 7.5 %).
 
+## The GUI caches (`ui_power_cache`, `fleet_upgrade_cache`, `cursor_path_cache`, `tooltip_cache`)
+
+Stellaris 4.5.4, the `fmbase` save (year 2343), no mods, 1280x720 window. The player's largest fleet (139 destroyers) is
+selected with the bench DLL's `select`, so the fleet window is open on it; the mouse is the bench DLL's `mouse` (the
+engine's own position query answered with a fixed point), on a system in the galaxy view unless stated. Measured by the
+plugin's counters over windows of 10 s (`bench/scripts/gui_check.py`). The game was paused; its main loop then runs
+the GUI update about 200 to 330 times a second on this machine.
+
+What the engine recomputes on every GUI update in that scene, and what it costs each time:
+
+| asked for by | engine work | ms per GUI update |
+|---|---|---|
+| the fleet window entry's update (all of it) | name, power, hull / armor / shields, orders, upgrade button, ship list | 0.91 to 1.00 |
+| of which the upgrade button's `CanAffordUpgrade` | every ship's upgrade cost against the treasury, with the cost text | 0.41 to 0.45 |
+| of which the power string | every ship's stats from scratch | about 0.2 |
+| the cursor's `CalcCanMoveTo` (one selected fleet) | a path search to the hovered system | 0.15 to 0.25 |
+| the hovered system's tooltip | built again, to be compared with the text on screen | 0.20 |
+| a ship row's tooltip in the fleet window | built again | 0.10 |
+| the leader portrait's tooltip | built again | 0.19 |
+
+With the four caches on (two alternations, 10 s each):
+
+| | caches off | caches on |
+|---|---|---|
+| fleet window entry update | 0.907 / 0.997 ms | 0.325 / 0.351 ms |
+| GUI updates in 10.2 s | 2220 / 1948 | 3368 / 3106 |
+| upgrade checks computed | every update | 40 / 62 |
+| path checks computed | every update | 20 / 20 |
+| tooltips built | every update | 70 / 90 |
+
+One GUI update of that scene takes about 4.9 ms without and 3.2 ms with the caches. While the game runs at speed 3 the
+entry update takes 1.25 ms without and 0.65 ms with them (the caches are refilled on every game day).
+
+Verify modes (`tooltip_cache=2`, `fleet_upgrade_cache=2`, `cursor_path_cache=2`: the engine answers every time and
+the kept answer is compared with it):
+
+| | comparisons | mismatches |
+|---|---|---|
+| paused, mouse on a system, a ship row, the leader: tooltips | 6398 | 0 |
+| paused: upgrade check | 6487 | 0 |
+| paused, mouse on a system: path check | 2665 | 0 |
+| running at speed 3 for 122 days, mouse on a system: tooltips | 683 | 2 |
+| running: upgrade check | 712 | 0 |
+| running: path check | 933 | 0 |
+
+The two tooltip mismatches are the hovered system's tooltip changing inside a game day (fleets moving in and out): the
+kept text was 47 and 140 ms old, which is the staleness `tooltip_cache_ms` bounds.
+
+Also measured there: in the system view the cursor update's object picking (`GetSelectableAt`) is 0.1 % of the main
+thread, so nothing was done about it; the fleet map icons ask for the cheap sum of per-ship values, not the full
+recomputation.
+
 ## Tried, no measurable effect (not shipped)
 
 | Idea | Save | Wall time | Process CPU |

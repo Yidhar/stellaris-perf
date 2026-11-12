@@ -61,6 +61,30 @@ struct SharedStats {
     // (perf_nodes.hpp, published only while node_trace is on)
     uint32_t flush_tid;
     uint32_t flush_active;
+    // the GUI caches: the applied settings, then monotonic counters
+    int32_t ui_power_cache;
+    int32_t tooltip_cache;     // 0 off, 1 on, 2 verify; -1 = unavailable (the call sites were not hooked)
+    int32_t tooltip_cache_ms;
+    int32_t fleet_view_hooked;  // 1 while CFleetViewEntry::OnUpdate is hooked
+    uint64_t fleet_view_updates;  // CFleetViewEntry::OnUpdate calls (one per shown entry and frame)
+    uint64_t ui_power_hits;       // fleet power asked for by the in-game GUI outside the fleet manager
+    uint64_t ui_power_misses;
+    uint64_t tooltip_kept;        // provider calls answered from the cache (published every 2 s)
+    uint64_t tooltip_built;
+    uint64_t tooltip_bypassed;
+    uint64_t tooltip_mismatches;  // verify: the provider's answer differed from the cached one
+    uint64_t fleet_view_ns;       // time inside CFleetViewEntry::OnUpdate (published every 2 s)
+    uint64_t tooltip_build_ns;    // time inside the tooltip providers while the cache or verify is on
+    int32_t fleet_upgrade_cache;  // 0 off, 1 on, 2 verify; -1 = unavailable
+    int32_t cursor_path_cache;
+    uint64_t upgrade_kept;        // the upgrade button's affordability check: answered from the cache / by the engine
+    uint64_t upgrade_asked;
+    uint64_t upgrade_mismatches;  // verify
+    uint64_t upgrade_ns;          // time inside the engine's check
+    uint64_t path_kept;           // the cursor's and hover indicator's path check
+    uint64_t path_asked;
+    uint64_t path_mismatches;
+    uint64_t path_ns;
 };
 #pragma pack(pop)
 

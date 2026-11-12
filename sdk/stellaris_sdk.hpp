@@ -18,9 +18,14 @@ namespace glob {
     inline constexpr uintptr_t UpdateShipParallel_GrainClamp = 0x252B6A;  // UpdateShipParallel_GrainClamp  score=anchor live=anchor
     inline constexpr uintptr_t UseSavedRandom = 0x311BEE0;  // UseSavedRandom  score=anchor live=anchor
     inline constexpr uintptr_t g_CurrentGameState = 0x311B708;  // g_CurrentGameState  score=0.771 live=not-checked
+    inline constexpr uintptr_t g_CurrentIdler = 0x311BF18;  // g_CurrentIdler  score=anchor live=anchor
     inline constexpr uintptr_t g_CurrentInGameIdler = 0x311BF10;  // g_CurrentInGameIdler  score=0.791 live=not-checked
     inline constexpr uintptr_t g_bFrameSmoothing = 0x280E838;  // g_bFrameSmoothing  score=anchor live=anchor
 }  // namespace glob
+
+namespace db {
+    inline constexpr uintptr_t CFleet = 0x31199E8;
+}  // namespace db
 
 namespace rt {
     inline constexpr std::ptrdiff_t CBlob_capacity = 0x10;
@@ -40,7 +45,12 @@ namespace rt {
     inline constexpr std::ptrdiff_t CEventScope_type = 0x8;
     inline constexpr std::ptrdiff_t CEventTarget_is_event_target = 0x198;
     inline constexpr std::ptrdiff_t CFleetManagerView_reinforce_due = 0x32B8;
+    inline constexpr std::ptrdiff_t CFleet_id = 0x30;
+    inline constexpr std::ptrdiff_t CFleet_selectable = 0x18;
+    inline constexpr std::ptrdiff_t CGameIdler_gui = 0xF0;
+    inline constexpr std::ptrdiff_t CGameIdler_input = 0xF8;
     inline constexpr std::ptrdiff_t CGameState_date_hours = 0xC0;
+    inline constexpr std::ptrdiff_t CGui_hovered_object = 0x180;
     inline constexpr std::ptrdiff_t CHasFlagTrigger_dynamic_size = 0x248;
     inline constexpr std::ptrdiff_t CHasFlagTrigger_flag = 0x220;
     inline constexpr std::ptrdiff_t CHasFlagTrigger_vt_GetFlags = 0xF0;
@@ -88,12 +98,21 @@ namespace rt {
     inline constexpr std::ptrdiff_t CStaticLexer_entry_size = 0x30;
     inline constexpr std::ptrdiff_t CStaticLexer_wanted = 0x80;
     inline constexpr std::ptrdiff_t CString_text = 0x10;
+    inline constexpr std::ptrdiff_t CToolTip_size = 0xD0;
+    inline constexpr std::ptrdiff_t CToolTip_state = 0xC0;
+    inline constexpr std::ptrdiff_t CToolTip_string_count = 0x4;
+    inline constexpr std::ptrdiff_t CToolTip_strings = 0x0;
     inline constexpr std::ptrdiff_t CWriter_binary = 0x18;
     inline constexpr std::ptrdiff_t CWriter_depth = 0x8;
     inline constexpr std::ptrdiff_t CWriter_file = 0x10;
     inline constexpr std::ptrdiff_t CWriter_token_eol = 0x10;
     inline constexpr std::ptrdiff_t CWriter_token_fixed_point = 0x167;
     inline constexpr std::ptrdiff_t CWriter_token_indent = 0x11;
+    inline constexpr std::ptrdiff_t TPdxRefDatabase_capacity = 0x20;
+    inline constexpr std::ptrdiff_t TPdxRefDatabase_slot_object = 0x8;
+    inline constexpr std::ptrdiff_t TPdxRefDatabase_slot_size = 0x10;
+    inline constexpr std::ptrdiff_t TPdxRefDatabase_slots = 0x18;
+    inline constexpr std::ptrdiff_t TPdxRef_index_mask = 0xFFFFFF;
 }  // namespace rt
 
 namespace vt {
@@ -101,6 +120,9 @@ namespace vt {
     inline constexpr int CFile_GetSize = 16;
     inline constexpr int CFile_WriteCStr = 6;
     inline constexpr int CFile_WriteData = 9;
+    inline constexpr int CGameIdler_BuildToolTip = 32;
+    inline constexpr int CGuiObject_GetToolTipHandler = 69;
+    inline constexpr int CInput_GetMousePosition = 25;
     inline constexpr int CModifierNodeCalc_Call = 2;
     inline constexpr int CPdxModifierName_CalcHash = 5;
 }  // namespace vt
@@ -117,6 +139,8 @@ namespace fn {
     inline constexpr uintptr_t CFile_WriteCStr = 0x1B50860;
     inline constexpr uintptr_t CFleetManagerTemplateGridController_Update = 0x14A6230;
     inline constexpr uintptr_t CFleetManagerView_Update = 0x11321C0;
+    inline constexpr uintptr_t CFleetMovementManager_CalcCanMoveTo = 0xE33920;
+    inline constexpr uintptr_t CFleetViewEntry_OnUpdate = 0x1268CB0;
     inline constexpr uintptr_t CFleet_CalcMilitaryPower = 0xC85DB0;
     inline constexpr uintptr_t CGameIdler_DrawStep = 0x337DB0;
     inline constexpr uintptr_t CGameIdler_Idle = 0x336B40;
@@ -128,6 +152,7 @@ namespace fn {
     inline constexpr uintptr_t CGameState_YearlyUpdate = 0x262950;
     inline constexpr uintptr_t CHasFlagTrigger_ActualEvaluate = 0x1960EE0;
     inline constexpr uintptr_t CInGameIdler_SaveGame = 0x937820;
+    inline constexpr uintptr_t CInGameIdler_Select = 0x927920;
     inline constexpr uintptr_t CInGameIdler_SetGameSpeed = 0x938230;
     inline constexpr uintptr_t CInGameIdler_SetPaused = 0x938920;
     inline constexpr uintptr_t CInGameIdler_Update = 0x92C980;
@@ -154,6 +179,7 @@ namespace fn {
     inline constexpr uintptr_t CScriptedRule_Evaluate = 0x5BB5A0;
     inline constexpr uintptr_t CStaticLexer_RebuildTable = 0x1BBC4B0;
     inline constexpr uintptr_t CStaticLexer_Table = 0x1BBC440;
+    inline constexpr uintptr_t CString_Assign = 0x15BC40;
     inline constexpr uintptr_t CWriter_WriteCString = 0x1BBC180;
     inline constexpr uintptr_t CWriter_WriteIndent = 0x1BBAE90;
     inline constexpr uintptr_t CWriter_WriteString = 0x1BBA970;
@@ -161,6 +187,7 @@ namespace fn {
     inline constexpr uintptr_t GetDynamicFlag = 0x9FA5A0;
     inline constexpr uintptr_t Gui_Update = 0x1C11400;
     inline constexpr uintptr_t NColonyUpdate_MonthlyUpdate = 0xE47350;
+    inline constexpr uintptr_t NFleetUtil_CanAffordUpgrade = 0xE6A2B0;
     inline constexpr uintptr_t NPlanetJobs_UpdatePopJobs = 0xB2BFF0;
     inline constexpr uintptr_t UpdateAIParallel = 0xB8DB40;
 }  // namespace fn
@@ -176,7 +203,12 @@ namespace site {
     inline constexpr uintptr_t CCountryRelayNetworkManager_UpdateRelayNetwork_InvalidateChildren = 0x754268;
     inline constexpr uintptr_t CCountry_InvalidateModifier_InvalidateChildren = 0x23EEA7;
     inline constexpr uintptr_t CCountry_InvalidateRelayNetworkModifier_InvalidateChildren = 0x578966;
+    inline constexpr uintptr_t CFleetActionUpgradeButton_IsValid_CanAffordUpgrade = 0x1576BF1;
+    inline constexpr uintptr_t CGalacticObjectMapIcon_UpdateHoverIndicator_CalcCanMoveTo = 0x162AA43;
+    inline constexpr uintptr_t CInGameIdler_UpdateCursor_CalcCanMoveTo = 0x92B9A3;
     inline constexpr uintptr_t CModifierNodeBase_Invalidate_AddInvalid = 0x23965E;
+    inline constexpr uintptr_t CTooltipManager_Update_BuildToolTip = 0x1016106;
+    inline constexpr uintptr_t CTooltipManager_Update_GetHandler = 0x1016096;
     inline constexpr uintptr_t NColonyUpdate_DailyUpdatePopJobs_UpdatePopJobs_0 = 0xE4730E;
     inline constexpr uintptr_t NColonyUpdate_DailyUpdatePopJobs_UpdatePopJobs_1 = 0xE47336;
     inline constexpr uintptr_t NColonyUpdate_MonthlyUpdate_UpdatePopJobs_0 = 0xE47539;

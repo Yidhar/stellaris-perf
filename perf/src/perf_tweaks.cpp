@@ -13,6 +13,8 @@
 #include "perf_writer.hpp"
 #include "perf_render.hpp"
 #include "perf_ui.hpp"
+#include "perf_tooltip.hpp"
+#include "perf_gui.hpp"
 #include "stellaris_sdk.hpp"
 #include "MinHook.h"
 
@@ -72,6 +74,7 @@ using FnHandleTurnTick = void (*)(void* game_state, void* commands);
 using FnCalcOpinion = int (*)(const void* country, const void* other, void* reason);
 using FnRuleEvaluate = bool (*)(const void* rule, void* scope, void* reason, uint8_t show_tooltip, bool flag);
 using FnFleetManagerUpdate = void (*)(void* view);
+using FnFleetViewEntryUpdate = void (*)(void* entry);
 using FnTemplateGridUpdate = int (*)(void* controller, const void* templates, void* window, void* grid);
 using FnHasFlag = bool (*)(const void* trigger, void* scope);
 using FnGetFlags = const void* (*)(const void* trigger, void* scope);
@@ -92,6 +95,7 @@ FnHandleTurnTick g_orig_turn_tick = nullptr;
 FnCalcOpinion g_orig_opinion = nullptr;
 FnRuleEvaluate g_orig_rule = nullptr;
 FnFleetManagerUpdate g_orig_fm_update = nullptr;
+FnFleetViewEntryUpdate g_orig_fv_update = nullptr;
 FnTemplateGridUpdate g_orig_grid_update = nullptr;
 FnHasFlag g_orig_has_flag = nullptr;
 FnUpdateFlags g_orig_update_flags = nullptr;
@@ -117,7 +121,7 @@ std::atomic<int> g_rule_mode{ 0 };
 struct Stats {
     std::atomic<uint64_t> hits{ 0 }, misses{ 0 }, bypass{ 0 };
 };
-Stats g_opinion_stats, g_rule_stats, g_fm_stats, g_reinforce_stats;
+Stats g_opinion_stats, g_rule_stats, g_fm_stats, g_fv_stats, g_reinforce_stats;
 // flags: hits = static checks answered by the SIMD scan, misses = dynamic flag@scope checks left to
 // the original, bypass = containers the hook could not read (left to the original)
 Stats g_flag_stats;
@@ -130,14 +134,16 @@ std::atomic<uint64_t> g_flag_mismatch{ 0 };
 struct LocalCounts {
     uint32_t hits = 0, misses = 0, bypass = 0;
     void Tick(Stats& to) {
-        if (hits + misses + bypass < 4096) return;
+        if (hits + misses + bypass >= 4096) Flush(to);
+    }
+    void Flush(Stats& to) {
         to.hits.fetch_add(hits, std::memory_order_relaxed);
         to.misses.fetch_add(misses, std::memory_order_relaxed);
         to.bypass.fetch_add(bypass, std::memory_order_relaxed);
         hits = misses = bypass = 0;
     }
 };
-thread_local LocalCounts t_opinion_counts, t_rule_counts, t_fm_counts, t_flag_counts, t_expiry_counts;
+thread_local LocalCounts t_opinion_counts, t_rule_counts, t_fm_counts, t_fv_counts, t_flag_counts, t_expiry_counts;
 
 // ---- profile: what the hooked functions cost, split into the main (tick) thread and the others --
 
@@ -389,6 +395,20 @@ std::atomic<bool> g_fm_on{ false };
 thread_local int t_in_fm = 0;
 thread_local void* t_fm_view = nullptr;
 
+// The rest of the in-game GUI asks the same way. The fleet window (the selected fleets): CFleetViewEntry::OnUpdate runs
+// for every shown entry every frame and gets the power to show from CFleet::BuildFleetOffensivePowerString, which
+// calls the same CFleet::CalcMilitaryPower with "not the cached per-ship value": every ship's hull, armor, shields,
+// evasion and damage are worked out again. So do the outliner's fleet rows (ten times a second, every fleet) and a
+// fleet's tooltip (the map icons ask for the cheap sum of the per-ship values, which is left alone). The same cache
+// answers the "from scratch" calls under the same limits (one second of real time, never across a game day, the
+// fleet's ship array and count in the key) wherever the calling thread is inside a per-frame GUI update
+// (phase::GuiDepth), and every call inside a fleet window entry's update. The simulation never is in the GUI context:
+// a tick suspends it, and the workers have none.
+std::atomic<bool> g_fv_on{ false };
+bool g_fv_hooked = false;
+thread_local int t_in_fv = 0;
+std::atomic<uint64_t> g_fv_cycles{ 0 };  // time inside the entries' updates (TSC), for the benchmarks
+
 // CFleetManagerView::Update reruns CalcAllShipsToReinforce whenever its inlined
 // ShouldUpdateExpensiveThisFrame(8) is true (10 ms of every 80 ms, changed or not), and it is the
 // window's biggest cost while the game runs. The flag is stored at the start of Update and read
@@ -450,7 +470,9 @@ void HandleTurnTickDetour(void* game_state, void* commands) {
     ui::TickBegin();
     const bool ph = phase::Enter(phase::kTick);
     const uint64_t t0 = __rdtsc();
+    const int gui = phase::SuspendGui();  // the simulation is never the GUI, wherever the tick was started from
     g_orig_turn_tick(game_state, commands);
+    phase::ResumeGui(gui);
     phase::Exit(ph);
     phase::OnTickEnd();
     render::TickEnd();
@@ -786,11 +808,31 @@ int TemplateGridUpdateDetour(void* controller, const void* templates, void* wind
     return g_orig_grid_update(controller, templates, window, grid);
 }
 
+struct FleetViewScope {
+    FleetViewScope() { ++t_in_fv; }
+    ~FleetViewScope() { --t_in_fv; }
+};
+
+void FleetViewEntryUpdateDetour(void* entry) {
+    const FleetViewScope scope;
+    if (SharedStats* shared = g_shared) InterlockedIncrement64((volatile LONG64*)&shared->fleet_view_updates);
+    const uint64_t t0 = __rdtsc();
+    g_orig_fv_update(entry);
+    g_fv_cycles.fetch_add(__rdtsc() - t0, std::memory_order_relaxed);
+}
+
 int64_t* FleetPowerDetour(const void* fleet, int64_t* out, int type, bool flag) {
-    if (t_in_fm == 0 || !g_fm_on.load(std::memory_order_relaxed)) {
+    const bool manager = t_in_fm != 0 && g_fm_on.load(std::memory_order_relaxed);
+    // inside a fleet window entry's update; anywhere else in the GUI only the "from scratch" variant, which no
+    // simulation code asks for (its callers are the windows, the outliner and the tooltips)
+    const bool view = !manager && (t_in_fv != 0 || (!flag && phase::GuiDepth() > 0)) && g_fv_on.load(std::memory_order_relaxed);
+    if (!manager && !view) {
         return g_orig_fleet_power(fleet, out, type, flag);
     }
-    LocalCounts& counts = t_fm_counts;
+    // The GUI's lookups are few (a handful per frame) and the benchmarks read their counts: those are published at
+    // once (Flush), the manager's every 4096 (Tick).
+    LocalCounts& counts = view ? t_fv_counts : t_fm_counts;
+    Stats& stats = view ? g_fv_stats : g_fm_stats;
     uint64_t ships;
     int32_t count;
     __try {
@@ -798,7 +840,7 @@ int64_t* FleetPowerDetour(const void* fleet, int64_t* out, int type, bool flag) 
         count = *(const int32_t*)((const char*)fleet + sdk::ent::CFleet::ships + kArrayCount);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         ++counts.bypass;
-        counts.Tick(g_fm_stats);
+        view ? counts.Flush(stats) : counts.Tick(stats);
         return g_orig_fleet_power(fleet, out, type, flag);
     }
     const uint64_t stamp = (g_gen.load(std::memory_order_relaxed) << 32) | (uint32_t)(GetTickCount64() / 1000);
@@ -807,12 +849,12 @@ int64_t* FleetPowerDetour(const void* fleet, int64_t* out, int type, bool flag) 
     if (e.fleet == fleet && e.stamp == stamp && e.ships == ships && e.count == count && e.type == type &&
         e.flag == flag) {
         ++counts.hits;
-        counts.Tick(g_fm_stats);
+        view ? counts.Flush(stats) : counts.Tick(stats);
         *out = e.value;
         return out;
     }
     ++counts.misses;
-    counts.Tick(g_fm_stats);
+    view ? counts.Flush(stats) : counts.Tick(stats);
     int64_t* r = g_orig_fleet_power(fleet, out, type, flag);
     e.fleet = fleet;
     e.ships = ships;
@@ -1505,7 +1547,11 @@ bool Install(uintptr_t base) {
               "CEventScope::Copy") && ok;
     ok = Hook(base + sdk::fn::GetDynamicFlag, (void*)&GetDynamicFlagDetour, (void**)&g_orig_dyn_flag, "GetDynamicFlag") && ok;
     g_installed = ok;
-    if (ok) {  // not essential: without them only these two optimizations are missing
+    if (ok) {  // not essential: without them only these optimizations are missing
+        g_fv_hooked = Hook(base + sdk::fn::CFleetViewEntry_OnUpdate, (void*)&FleetViewEntryUpdateDetour, (void**)&g_orig_fv_update,
+                           "CFleetViewEntry::OnUpdate");
+        tooltip::Install(base);
+        gui::Install(base);
         alloc::Install(base);
         combat::Install(base);
         colony::Install(base);
@@ -1550,6 +1596,8 @@ void Uninstall() {
     DestroyShared();
 }
 
+uint64_t Generation() { return g_gen.load(std::memory_order_relaxed); }
+
 void Apply(const Settings& s) {
     if (!g_base) return;
     if (s.frame_smoothing >= 0) {
@@ -1567,7 +1615,12 @@ void Apply(const Settings& s) {
     if (g_rule_mode.exchange(s.rule_cache) != s.rule_cache) g_gen.fetch_add(1);
     g_rule_on = s.rule_cache != 0;
     if (g_fm_on.exchange(s.fleet_manager_cache) != s.fleet_manager_cache) g_gen.fetch_add(1);
+    if (g_fv_on.exchange(s.ui_power_cache) != s.ui_power_cache) g_gen.fetch_add(1);
+    gui::SetUpgradeMode(s.fleet_upgrade_cache);
+    gui::SetPathMode(s.cursor_path_cache);
     g_reinforce_ms = s.fleet_manager_reinforce_ms;
+    tooltip::SetMode(s.tooltip_cache);
+    tooltip::SetMaxAgeMs(s.tooltip_cache_ms);
     if (s.rule_profile && !g_rule_profile.load()) {
         for (int p = 0; p < kRulePaths; ++p) {
             for (int i = 0; i < kRuleIndexSlots; ++i) g_rule_prof_calls[p][i] = 0, g_rule_prof_cycles[p][i] = 0;
@@ -1620,6 +1673,12 @@ void Apply(const Settings& s) {
         shared->rule_cache = s.rule_cache;
         shared->fleet_manager_cache = s.fleet_manager_cache;
         shared->fleet_manager_reinforce_ms = s.fleet_manager_reinforce_ms;
+        shared->ui_power_cache = s.ui_power_cache;
+        shared->fleet_upgrade_cache = gui::Installed() ? s.fleet_upgrade_cache : -1;
+        shared->cursor_path_cache = gui::Installed() ? s.cursor_path_cache : -1;
+        shared->fleet_view_hooked = g_fv_hooked ? 1 : 0;
+        shared->tooltip_cache = tooltip::Installed() ? s.tooltip_cache : -1;
+        shared->tooltip_cache_ms = s.tooltip_cache_ms;
         MemoryBarrier();
         InterlockedIncrement64((volatile LONG64*)&shared->applied_seq);
     }
@@ -1642,10 +1701,11 @@ bool SetUserSettings(const Settings& s) {
     Apply(s);
     Log("settings: frame_smoothing=%d opinion_cache=%d rule_cache=%d fleet_manager_cache=%d "
         "fleet_manager_reinforce_ms=%d flag_simd=%d flag_expiry_skip=%d fleet_parallel_grain1=%d modifier_flush=%d "
-        "profile=%d",
+        "profile=%d ui_power_cache=%d tooltip_cache=%d tooltip_cache_ms=%d fleet_upgrade_cache=%d cursor_path_cache=%d",
         s.frame_smoothing, (int)s.opinion_cache, s.rule_cache, (int)s.fleet_manager_cache,
         s.fleet_manager_reinforce_ms, s.flag_simd, (int)s.flag_expiry_skip, (int)s.fleet_parallel_grain1,
-        s.modifier_flush, (int)s.profile);
+        s.modifier_flush, (int)s.profile, (int)s.ui_power_cache, s.tooltip_cache, s.tooltip_cache_ms, s.fleet_upgrade_cache,
+        s.cursor_path_cache);
     return true;
 }
 
@@ -1673,6 +1733,24 @@ void Publish() {
         shared->alloc_evictions = ac.evictions;
         shared->alloc_rejects = ac.rejects;
         shared->alloc_cached_bytes = ac.cached_bytes;
+        shared->ui_power_hits = g_fv_stats.hits.load();
+        shared->ui_power_misses = g_fv_stats.misses.load();
+        const gui::Counters gc = gui::Read();
+        shared->upgrade_kept = gc.upgrade_kept;
+        shared->upgrade_asked = gc.upgrade_asked;
+        shared->upgrade_mismatches = gc.upgrade_mismatches;
+        shared->upgrade_ns = (uint64_t)((double)gc.upgrade_cycles * g_ms_per_cycle * 1e6);
+        shared->path_kept = gc.path_kept;
+        shared->path_asked = gc.path_asked;
+        shared->path_mismatches = gc.path_mismatches;
+        shared->path_ns = (uint64_t)((double)gc.path_cycles * g_ms_per_cycle * 1e6);
+        const tooltip::Counters tc = tooltip::Read();
+        shared->tooltip_kept = tc.kept;
+        shared->tooltip_built = tc.built;
+        shared->tooltip_bypassed = tc.bypassed;
+        shared->tooltip_mismatches = tc.mismatches;
+        shared->tooltip_build_ns = (uint64_t)((double)tc.build_cycles * g_ms_per_cycle * 1e6);
+        shared->fleet_view_ns = (uint64_t)((double)g_fv_cycles.load() * g_ms_per_cycle * 1e6);
     }
 }
 
@@ -1747,6 +1825,7 @@ std::string StatsLine() {
                                           std::to_string((int)(g_rule_saving_ns_per_s.load() / 1e6)) + " ms/s CPU"
                                     : std::string()) + " | " +
            one("fleet_manager_cache", g_fm_stats, g_fm_on) + " | " +
+           one("ui_power_cache", g_fv_stats, g_fv_on) + " | " + tooltip::Stats(g_ms_per_cycle) + " | " + gui::Stats(g_ms_per_cycle) + " | " +
            one("reinforce_throttle(hits=skipped)", g_reinforce_stats, g_reinforce_ms.load() > 0) + " | " +
            one("flag_simd(hits=static misses=dynamic bypass=unreadable)", g_flag_stats, g_flag_mode.load() != 0) +
            " mismatches=" + std::to_string(g_flag_mismatch.load()) + " | " +

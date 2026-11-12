@@ -24,6 +24,8 @@ struct ScopeKey {
 bool BuildScopeKey(const void* scope, ScopeKey* key);
 // A zeroed per-thread table of the given size, freed by Uninstall once no detour runs any more.
 void* RegisterTable(size_t bytes);
+// The caches' generation: it moves when the game date changes (checked after every tick) and when a setting changes.
+uint64_t Generation();
 
 // Runtime performance tweaks (config\stellaris_perf.ini of the plugin folder):
 //  * frame_smoothing: the engine global g_bFrameSmoothing (the `smooth` console command). When on,
@@ -46,6 +48,23 @@ struct Settings {
     // Fleet manager window: recalculate the ships to reinforce at most every this many ms instead of
     // every 80 ms (0 = the game's own throttle).
     int fleet_manager_reinforce_ms = 1000;
+    // The rest of the in-game GUI: the same cache for the fleet power its per-frame updates ask for (the fleet
+    // window's entries, the outliner's fleet rows, map icons, tooltips), which the engine sums from every ship's
+    // stats each time.
+    bool ui_power_cache = true;
+    // Fleet window: the upgrade button's affordability check (every ship's upgrade cost against the treasury, each
+    // frame) answered from the last one for the same fleet, game day and input state, for at most a second
+    // (perf_gui.hpp); 0 = off, 1 = on, 2 = verify
+    int fleet_upgrade_cache = 1;
+    // Galaxy view: the cursor's and the hover indicator's "can the selected fleets move there" (a path search each
+    // frame) answered from the last one for the same fleet and system, for at most half a second (perf_gui.hpp);
+    // 0 = off, 1 = on, 2 = verify
+    int cursor_path_cache = 1;
+    // Tooltips: 0 = built every frame (the game's behaviour), 1 = kept while nothing that could change the content has
+    // happened (perf_tooltip.hpp), 2 = verify (built every frame and compared with what the cache would have shown)
+    int tooltip_cache = 1;
+    // The longest a tooltip is kept, in ms of real time
+    int tooltip_cache_ms = 250;
     // has_*_flag: 0 = the game's scan, 1 = SSE2 scan of the same ids (same answer), 2 = verify
     // (the game answers, the SSE2 scan runs too and mismatches are counted)
     int flag_simd = 1;

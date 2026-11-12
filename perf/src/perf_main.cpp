@@ -94,6 +94,11 @@ perf::Settings ReadIni(const std::wstring& path) {
     s.rule_cache = GetPrivateProfileIntW(L"perf", L"rule_cache", 0, p);
     s.fleet_manager_cache = GetPrivateProfileIntW(L"perf", L"fleet_manager_cache", 1, p) != 0;
     s.fleet_manager_reinforce_ms = GetPrivateProfileIntW(L"perf", L"fleet_manager_reinforce_ms", 1000, p);
+    s.ui_power_cache = GetPrivateProfileIntW(L"perf", L"ui_power_cache", 1, p) != 0;
+    s.fleet_upgrade_cache = GetPrivateProfileIntW(L"perf", L"fleet_upgrade_cache", 1, p);
+    s.cursor_path_cache = GetPrivateProfileIntW(L"perf", L"cursor_path_cache", 1, p);
+    s.tooltip_cache = GetPrivateProfileIntW(L"perf", L"tooltip_cache", 1, p);
+    s.tooltip_cache_ms = GetPrivateProfileIntW(L"perf", L"tooltip_cache_ms", 250, p);
     s.flag_simd = GetPrivateProfileIntW(L"perf", L"flag_simd", 1, p);
     s.flag_expiry_skip = GetPrivateProfileIntW(L"perf", L"flag_expiry_skip", 1, p) != 0;
     s.profile = GetPrivateProfileIntW(L"perf", L"profile", 0, p) != 0;

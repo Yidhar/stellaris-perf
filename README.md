@@ -85,6 +85,47 @@ are off pass straight through to the engine.
 - **Fleet manager window: reinforcement recalculation throttle** (`fleet_manager_reinforce_ms`, default 1000). With
   the window open the engine reruns the "which ships need reinforcement" pass for 10 ms of every 80 ms whether or not
   anything changed; the plugin lets it run at most once per interval. Display only.
+- **The rest of the in-game GUI: military power cache** (`ui_power_cache`). The entry of a selected fleet in the fleet
+  window (`CFleetViewEntry::OnUpdate`, once per shown entry and frame), the outliner's fleet rows (ten times a second,
+  every fleet) and a fleet's tooltip get the power they show from the same engine function, again asking for every
+  ship's hull, armor, shields, evasion and damage from scratch. The fleet manager's cache answers them too, under the
+  same limits (one second of real time, never across a game day, the fleet's ship array and ship count in the key),
+  wherever the calling thread is inside one of the per-frame GUI updates. The simulation never is: a tick suspends
+  that context and the worker threads have none. Display only.
+- **Fleet window: the upgrade button's check** (`fleet_upgrade_cache`, default `1`). Every frame the fleet window asks
+  each selected fleet's upgrade button whether it is valid, and the button works out the fleet's upgrade cost for it:
+  every ship, component by component (resource tables), against the treasury and the income, with the localized cost
+  text as the reason. With a large fleet selected that was the largest single item of the fleet window's update.
+  The button's call (told apart by its return address; the upgrade command's own check is not touched) gets the last
+  answer and reason text back for the same fleet with the same ship array and count, on the same game day, as long as
+  no key or mouse button was pressed or released since (and none in the 100 ms before; moving the mouse changes
+  nothing), for at most one second. `2` lets the
+  engine answer every time and counts how often the kept answer differed. Display only.
+- **Galaxy view: the cursor's path check** (`cursor_path_cache`, default `1`). With fleets of yours selected and the
+  mouse over a system, the cursor update (for the first selected fleet) and the hovered system icon's indicator (for
+  every selected fleet) ask every frame whether the fleet can move there: a path search across the galaxy unless the
+  fleet's current path already leads there, only to pick the cursor and the indicator. Those two calls get the last
+  answer for the same fleet and system back on the same game day, for at most half a second. `2` verifies as above.
+  Display only; the order you give is checked by the engine as before.
+
+  Measured with a fleet of 139 ships selected, per GUI update: the fleet window entry's update 0.95 ms without and
+  0.34 ms with the power and upgrade caches; the cursor's path check 0.15 to 0.25 ms, then computed twice a second; a
+  hovered system's tooltip 0.2 ms, then built about once in forty updates while the mouse rests. The verify modes found
+  no difference in a paused game and two stale tooltips in 122 game days at speed 3
+  ([`bench/RESULTS.md`](bench/RESULTS.md)).
+- **Tooltips kept instead of rebuilt every frame** (`tooltip_cache`, default `1`; `tooltip_cache_ms`, default 250).
+  Every frame the tooltip manager resets its tooltip and asks for the content again, first the hovered GUI object's
+  tooltip handler, then the idler (the map and what lies on it), only to compare the answer with the text already on
+  screen. A ship's tooltip writes out every component for it (each weapon's damage lines, the cost and upkeep resource
+  tables, all localized); a fleet's walks its ships. Both requests are virtual calls made at one place each; the plugin
+  hooks those two call instructions (six bytes each, located by the SDK) and keeps what the provider last put into the
+  tooltip and what it returned. The same provider asked about the same object gets that back as long as nothing that
+  could change it has happened: no key or mouse button pressed or released since it was built and none during the
+  last 100 ms, the mouse where it was, the same game day and plugin settings, and at most `tooltip_cache_ms` of real
+  time. The rest of
+  the manager's update (hover timers, the comparison, placing the window) runs every frame as before. `2` asks the
+  provider every frame anyway and counts how often the kept content would have differed. Display only: while the game
+  runs, or after a change that needs no input, a tooltip can be up to `tooltip_cache_ms` behind.
 - **Large-block recycler** (`alloc_cache`, `alloc_cache_mb`). In a big battle the engine builds and frees several
   hundred-KB arrays per fleet on every combat tick (the targeting tables), each with a plain `operator new` / `free`
   pair, so every tick takes cold memory from the heap and gives it back. The plugin hooks `operator new` and `free`
@@ -348,6 +389,11 @@ clones.
 | `render_cap_between_ticks` | `1` | the same cap for the frames drawn between ticks, while the simulation runs |
 | `fleet_manager_cache` | `1` | cache fleet military power in the fleet manager window |
 | `fleet_manager_reinforce_ms` | `1000` | minimum ms between reinforcement recalculations (`0` = the game's own throttle) |
+| `ui_power_cache` | `1` | cache the fleet military power the rest of the in-game GUI asks for (fleet window, outliner rows, tooltips) |
+| `fleet_upgrade_cache` | `1` | fleet window: keep the upgrade button's affordability check for up to 1 s: `0` off, `1` on, `2` verify |
+| `cursor_path_cache` | `1` | galaxy view: keep the cursor's and hover indicator's path check for up to 0.5 s: `0` off, `1` on, `2` verify |
+| `tooltip_cache` | `1` | keep a tooltip's content while nothing that could change it happened: `0` off, `1` on, `2` verify |
+| `tooltip_cache_ms` | `250` | the longest a tooltip is kept, in ms of real time |
 | `flag_simd` | `1` | `0` engine scan, `1` SSE2 scan, `2` verify |
 | `flag_expiry_skip` | `1` | skip daily expiry on containers without timed flags |
 | `opinion_cache` | `0` | per-game-day opinion cache |
@@ -386,6 +432,7 @@ Requirements: Visual Studio 2022 (MSVC, x64) and CMake 3.20+. MinHook is fetched
 ```powershell
 cmake -S . -B build -G "Visual Studio 17 2022" -A x64
 cmake --build build --config Release        # build\Release\stellaris_perf.dll, stellaris_bench.dll
+build\Release\tooltip_test.exe              # the tooltip cache against a stand-in for the engine's code; no game needed
 ```
 
 The build also assembles the plugin folder, `build\plugin\stellaris-perf` (manifest, DLL, `defaults\`). Install it with
@@ -412,7 +459,8 @@ and rebuild. Which game build a release was made for is printed in its release n
 Releases: <https://github.com/Yidhar/stellaris-perf/releases>. The latest one is built by CI from its
 tag, with both zips and their SHA-256 files attached.
 
-`.github/workflows/build-release.yml` builds both DLLs on every push and pull request, checks the plugin folder with
+`.github/workflows/build-release.yml` builds both DLLs on every push and pull request, runs `tooltip_test.exe` (the
+tooltip cache's call-site hooks and logic, no game needed), checks the plugin folder with
 `tools/check_plugin.py` (manifest schema 2, the exe build matches the SDK, no stray files) and keeps the packaged zips
 as workflow artifacts. Pushing a tag `v<version>`, where the version is the one in `plugin/stl-plugin.json` (for
 example `git tag v0.2.0 && git push origin v0.2.0`; a different tag fails the check), makes the same workflow publish a

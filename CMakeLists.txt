@@ -29,6 +29,9 @@ add_library(stellaris_perf SHARED
     perf/src/perf_writer.cpp
     perf/src/perf_render.cpp
     perf/src/perf_ui.cpp
+    perf/src/perf_tooltip.cpp
+    perf/src/perf_gui.cpp
+    perf/src/perf_input.cpp
     perf/src/perf_phase.cpp
 )
 target_include_directories(stellaris_perf PRIVATE perf/include sdk)
@@ -42,7 +45,16 @@ add_library(stellaris_bench SHARED
 target_include_directories(stellaris_bench PRIVATE bench/include sdk)
 target_link_libraries(stellaris_bench PRIVATE d3d11 dxgi)
 
-foreach(target stellaris_perf stellaris_bench)
+# tooltip_test.exe: perf_tooltip's call-site hooks and cache against a stand-in for the engine's code (no game needed)
+add_executable(tooltip_test
+    tests/tooltip_test.cpp
+    perf/src/perf_tooltip.cpp
+    perf/src/perf_input.cpp
+)
+target_include_directories(tooltip_test PRIVATE perf/include sdk)
+target_link_libraries(tooltip_test PRIVATE minhook)
+
+foreach(target stellaris_perf stellaris_bench tooltip_test)
     target_compile_definitions(${target} PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS)
     if (MSVC)
         target_compile_options(${target} PRIVATE /utf-8)

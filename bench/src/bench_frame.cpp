@@ -50,6 +50,8 @@ using FnPresent = HRESULT(STDMETHODCALLTYPE*)(IDXGISwapChain* swap_chain, UINT s
 using FnSetPaused = void (*)(void* idler, const void* settings);
 using FnSetGameSpeed = void (*)(void* idler, int speed);
 using FnSaveGame = int (*)(void* idler, const void* name, bool cloud, bool overwrite);  // 0 = saving
+using FnSelect = void (*)(void* idler, const void* selectable);
+using FnMousePosition = int32_t* (*)(void* input, int32_t* point);
 
 uintptr_t g_base = 0;
 void** g_present_slot = nullptr;  // IDXGISwapChain::Present in DXGI's swap chain vtable
@@ -93,6 +95,42 @@ bool ReadU32(uintptr_t addr, uint32_t* out) {
 }
 
 void* Idler() { return ReadPtr(g_base + sdk::glob::g_CurrentInGameIdler); }
+bool WriteSlot(void** slot, void* value);
+
+// The engine asks its input object for the mouse position through a virtual (the GUI's hover test, the tooltips, the
+// cursor and the map's picking all do). While a point is set, that virtual answers with it instead of the real
+// cursor's, so a test can hover something without moving the user's mouse.
+void** g_mouse_slot = nullptr;  // the getter's slot in the input object's vtable
+FnMousePosition g_orig_mouse = nullptr;
+std::atomic<bool> g_mouse_on{ false };
+std::atomic<int32_t> g_mouse_x{ 0 }, g_mouse_y{ 0 };
+
+int32_t* MousePositionHook(void* input, int32_t* point) {
+    if (!g_mouse_on.load(std::memory_order_relaxed)) return g_orig_mouse(input, point);
+    point[0] = g_mouse_x.load(std::memory_order_relaxed);
+    point[1] = g_mouse_y.load(std::memory_order_relaxed);
+    return point;
+}
+
+bool HookMouse() {
+    if (g_mouse_slot) return true;
+    void* idler = ReadPtr(g_base + sdk::glob::g_CurrentIdler);
+    void* input = idler ? ReadPtr((uintptr_t)idler + sdk::rt::CGameIdler_input) : nullptr;
+    void** vtable = input ? (void**)ReadPtr((uintptr_t)input) : nullptr;
+    if (!vtable) return false;
+    void** slot = &vtable[sdk::vt::CInput_GetMousePosition];
+    g_orig_mouse = (FnMousePosition)ReadPtr((uintptr_t)slot);
+    if (!g_orig_mouse || !WriteSlot(slot, (void*)&MousePositionHook)) return false;
+    g_mouse_slot = slot;
+    return true;
+}
+
+// The GUI object under the (real or given) mouse, as the engine's GUI update last found it.
+void* HoveredObject() {
+    void* idler = ReadPtr(g_base + sdk::glob::g_CurrentIdler);
+    void* gui = idler ? ReadPtr((uintptr_t)idler + sdk::rt::CGameIdler_gui) : nullptr;
+    return gui ? ReadPtr((uintptr_t)gui + sdk::rt::CGui_hovered_object) : nullptr;
+}
 void* GameState() { return ReadPtr(g_base + sdk::glob::g_CurrentGameState); }
 
 // The engine applies a save's random_seed / random_count only while its console variable UseSavedRandom is set;
@@ -110,9 +148,10 @@ std::string Status() {
     char buf[256];
     snprintf(buf, sizeof(buf),
              "{\"ok\":true,\"in_game\":%s,\"hours\":%u,\"day\":%u,\"paused\":%s,\"speed\":%u,\"frames\":%llu,\"t\":%.6f,"
-             "\"saved_random\":%s}",
+             "\"saved_random\":%s,\"hovered\":%s,\"mouse\":%s}",
              in_game ? "true" : "false", hours, hours / 24, (paused_word & 0xFF) ? "true" : "false", speed,
-             (unsigned long long)g_frames.load(), Now(), g_use_saved_random && *g_use_saved_random ? "true" : "false");
+             (unsigned long long)g_frames.load(), Now(), g_use_saved_random && *g_use_saved_random ? "true" : "false",
+             HoveredObject() ? "true" : "false", g_mouse_on.load() ? "true" : "false");
     return buf;
 }
 
@@ -175,6 +214,29 @@ bool CallSaveGame(void* idler, const char* name, int* status) {
     }
 }
 
+// The fleet with this id, or null: the fleet database's slot for the id's index part, whose fleet carries the id.
+void* FleetById(uint32_t id) {
+    void* db = ReadPtr(g_base + sdk::db::CFleet);
+    uint32_t capacity = 0, own = 0;
+    const uint32_t index = id & (uint32_t)sdk::rt::TPdxRef_index_mask;
+    if (!db || !ReadU32((uintptr_t)db + sdk::rt::TPdxRefDatabase_capacity, &capacity) || index >= capacity) return nullptr;
+    void* slots = ReadPtr((uintptr_t)db + sdk::rt::TPdxRefDatabase_slots);
+    if (!slots) return nullptr;
+    void* fleet = ReadPtr((uintptr_t)slots + (size_t)index * sdk::rt::TPdxRefDatabase_slot_size + sdk::rt::TPdxRefDatabase_slot_object);
+    if (!fleet || !ReadU32((uintptr_t)fleet + sdk::rt::CFleet_id, &own) || own != id) return nullptr;
+    return fleet;
+}
+
+// CInGameIdler::Select on the fleet's CSelectable base: what a click on the fleet does (the fleet window opens on it).
+bool CallSelect(void* idler, void* fleet) {
+    __try {
+        ((FnSelect)(g_base + sdk::fn::CInGameIdler_Select))(idler, (const char*)fleet + sdk::rt::CFleet_selectable);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
 std::string Error(const char* what) { return std::string("{\"ok\":false,\"error\":\"") + what + "\"}"; }
 
 std::string Run(const std::string& line) {
@@ -196,6 +258,34 @@ std::string Run(const std::string& line) {
         const bool ok = !strcmp(cmd, "pause") ? CallSetPaused(idler, arg != 0) : CallSetGameSpeed(idler, arg);
         if (!ok) return Error("exception in the engine call");
         return Status();
+    }
+    if (!strcmp(cmd, "mouse")) {
+        int x = 0, y = 0;
+        const int got = sscanf(line.c_str(), "%31s %d %d", cmd, &x, &y);
+        if (got < 3) {  // "mouse off": the real cursor again
+            g_mouse_on.store(false);
+            return Status();
+        }
+        if (!HookMouse()) return Error("the input object's position getter was not found");
+        g_mouse_x.store(x);
+        g_mouse_y.store(y);
+        g_mouse_on.store(true);
+        return Status();
+    }
+    if (!strcmp(cmd, "select")) {
+        unsigned id = 0;
+        if (sscanf(line.c_str(), "%31s %u", cmd, &id) < 2) return Error("missing argument");
+        void* idler = Idler();
+        if (!idler || !GameState()) return Error("not in game");
+        void* fleet = FleetById(id);
+        if (!fleet) return Error("no fleet with this id");
+        if (!CallSelect(idler, fleet)) return Error("exception in the engine call");
+        uint32_t ships = 0;
+        // the ship array's count: a CPdxArray's, as far behind its pointer as the flag containers' is behind theirs
+        ReadU32((uintptr_t)fleet + sdk::ent::CFleet::ships + (sdk::rt::CPdxIntegerFlags_count - sdk::rt::CPdxIntegerFlags_ids), &ships);
+        char buf[96];
+        snprintf(buf, sizeof buf, "{\"ok\":true,\"fleet\":%u,\"ships\":%u}", id, ships);
+        return buf;
     }
     if (!strcmp(cmd, "save")) {
         char name[32] = {};
@@ -321,6 +411,11 @@ bool Install(uintptr_t base) {
 }
 
 void Uninstall() {
+    g_mouse_on.store(false);
+    if (g_mouse_slot) {
+        WriteSlot(g_mouse_slot, (void*)g_orig_mouse);
+        g_mouse_slot = nullptr;
+    }
     if (!g_present_slot) return;
     WriteSlot(g_present_slot, (void*)g_orig_present);
     g_present_slot = nullptr;

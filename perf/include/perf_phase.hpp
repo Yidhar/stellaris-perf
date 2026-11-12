@@ -52,6 +52,18 @@ void SetCallers(const char* spec);
 // kCount + an extra slot.
 bool Enter(int p);
 void Exit(bool opened);
+// The GUI context of the calling thread: how deep it is inside the per-frame GUI updates (the in-game idler's update
+// and the GUI framework's, hooked here whether or not the profile is on), 0 everywhere else and inside a simulation
+// tick. Caches that may only answer the GUI ask this.
+int GuiDepth();
+// Marks the calling thread as running GUI code for its lifetime (the tooltip providers, called outside those updates).
+struct GuiContext {
+    GuiContext();
+    ~GuiContext();
+};
+// The tick detour brackets the simulation with these: a tick is never "inside the GUI", the frames it draws are again.
+int SuspendGui();
+void ResumeGui(int depth);
 // After HandleTurnTick returned: attributes the tick to its game day and closes the day when the date moved on.
 void OnTickEnd();
 // Written by the plugin's worker thread every few seconds while enabled: logs\stellaris_perf_phases.json.

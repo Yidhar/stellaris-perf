@@ -126,14 +126,19 @@ class Bench:
 
 
 # perf_shared.hpp: SharedStats
-PERF_STATS_FMT = "<IIQiiiiiiiiQQQQQQQQQQQQQQQQIIIIIIIIII"
+PERF_STATS_FMT = "<IIQiiiiiiiiQQQQQQQQQQQQQQQQIIIIIIIIIIIIiiiiQQQQQQQQQiiQQQQQQQQ"
 PERF_STATS_FIELDS = ("magic", "size", "applied_seq", "frame_smoothing", "opinion_cache", "rule_cache",
                      "fleet_manager_cache", "fleet_manager_reinforce_ms", "flag_simd", "flag_expiry_skip", "fleet_parallel_grain1",
                      "fleet_manager_updates", "reinforce_skipped", "reinforce_passed", "fleet_power_hits",
                      "fleet_power_misses", "flag_static", "flag_dynamic", "flag_unreadable", "flag_mismatch",
                      "expiry_skipped", "expiry_passed", "alloc_hits", "alloc_misses", "alloc_evictions",
                      "alloc_rejects", "alloc_cached_bytes", "ai_heavy_tid", "ai_heavy_active", "ai_heavy_country", "ai_heavy_pad",
-                     "save_tid", "save_active", "jobs_tid", "jobs_active", "monthly_tid", "monthly_active")
+                     "save_tid", "save_active", "jobs_tid", "jobs_active", "monthly_tid", "monthly_active",
+                     "flush_tid", "flush_active", "ui_power_cache", "tooltip_cache", "tooltip_cache_ms", "fleet_view_hooked",
+                     "fleet_view_updates", "ui_power_hits", "ui_power_misses", "tooltip_kept",
+                     "tooltip_built", "tooltip_bypassed", "tooltip_mismatches", "fleet_view_ns", "tooltip_build_ns",
+                     "fleet_upgrade_cache", "cursor_path_cache", "upgrade_kept", "upgrade_asked", "upgrade_mismatches",
+                     "upgrade_ns", "path_kept", "path_asked", "path_mismatches", "path_ns")
 PERF_MAGIC = 0x31465250
 
 
@@ -157,7 +162,8 @@ def write_perf_ini(frame_smoothing=-1, opinion_cache=0, rule_cache=0, fleet_mana
                    modifier_flush=0, modifier_flush_max=32, fleet_parallel_grain1=0,
                    scope_profile=0, alloc_cache=0, alloc_cache_mb=8, combat_no_copy=0, colony_monthly_batch=0, pop_jobs_single_pass=0, pop_faction_batch=0,
                    pop_jobs_node_batch=0, pop_jobs_flush_first=0, node_trace=0, modifier_cascade_gate=0, ai_parallel_lpt=0, ai_weight_cache=0, ai_nested_inline=0, save_fast_format=0, save_fast_writer=0, tick_render_fps=0, ui_probe=0,
-                   render_cap_between_ticks=0, phase_profile=0, phase_extra="", phase_callers=""):
+                   render_cap_between_ticks=0, phase_profile=0, phase_extra="", phase_callers="",
+                   ui_power_cache=0, tooltip_cache=0, tooltip_cache_ms=250, fleet_upgrade_cache=0, cursor_path_cache=0):
     os.makedirs(os.path.dirname(PERF_INI), exist_ok=True)
     with open(PERF_INI, "w") as f:
         f.write("[perf]\n"
@@ -166,6 +172,11 @@ def write_perf_ini(frame_smoothing=-1, opinion_cache=0, rule_cache=0, fleet_mana
                 f"rule_cache={rule_cache}\n"
                 f"fleet_manager_cache={fleet_manager_cache}\n"
                 f"fleet_manager_reinforce_ms={fleet_manager_reinforce_ms}\n"
+                f"ui_power_cache={ui_power_cache}\n"
+                f"fleet_upgrade_cache={fleet_upgrade_cache}\n"
+                f"cursor_path_cache={cursor_path_cache}\n"
+                f"tooltip_cache={tooltip_cache}\n"
+                f"tooltip_cache_ms={tooltip_cache_ms}\n"
                 f"flag_simd={flag_simd}\n"
                 f"flag_expiry_skip={flag_expiry_skip}\n"
                 f"profile={profile}\n"

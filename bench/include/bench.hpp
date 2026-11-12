@@ -21,12 +21,17 @@ void Uninstall();
 
 // Runs one command on the main thread and returns its JSON reply (one line, no newline):
 //   status            {"ok":true,"in_game":..,"hours":..,"day":..,"paused":..,"speed":..,"frames":..,"t":..,
-//                      "saved_random":..}
+//                      "saved_random":..,"hovered":..,"mouse":..}
 //   pause <0|1>       CInGameIdler::SetPaused
 //   speed <0..5>      CInGameIdler::SetGameSpeed
 //   saved_random <0|1>  the UseSavedRandom console variable (1 while the DLL is loaded unless changed here)
 //   save <name>       CInGameIdler::SaveGame: a local save <name>.sav (1 to 15 characters) into the campaign's
 //                     folder, overwriting; written over the next frames
+//   select <fleet id> CInGameIdler::Select on that fleet, as a click on it: the fleet window opens on it, without the
+//                     mouse; {"ok":true,"fleet":..,"ships":..}
+//   mouse <x> <y>     the engine's mouse position getter answers with this client-area point from now on (hover tests,
+//                     tooltips, the cursor and the map's picking follow it; the real cursor is not moved); "mouse off"
+//                     gives the real cursor back. status reports "hovered" (a GUI object is under the mouse) and "mouse"
 // "frames" is the Present count since the DLL loaded, "t" the QueryPerformanceCounter time in
 // seconds when the command ran.
 std::string Execute(const std::string& line, unsigned timeout_ms);
